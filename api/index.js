@@ -497,8 +497,14 @@ async function buildConfigHTML(countries, latestWeek) {
                 const item = document.createElement('div');
                 item.className = 'drop-item' + (isSelected ? ' selected' : '');
                 item.textContent = c;
-                item.onclick = () => {
-                    if (!isSelected) { addCountry(c); renderDropdown(searchInput.value); searchInput.focus(); }
+                item.onclick = (e) => {
+                    e.stopPropagation();
+                    if (!isSelected) { 
+                        addCountry(c); 
+                        searchInput.value = ''; 
+                        renderDropdown(''); 
+                        searchInput.focus(); 
+                    }
                 };
                 dropdown.appendChild(item);
             }
