@@ -246,7 +246,7 @@ function formatMeta(item, finalId, type, rpdbApiKey) {
 
 const toIdSlug = (c) => c.toLowerCase().replace(/[^a-z0-9]+/g, "_");
 
-function buildManifest(country = "Global", multiCountries = []) {
+function buildManifest(country = "Global", multiCountries = [], movieType = "movie", seriesType = "series") {
     const list = multiCountries.length > 0 ? multiCountries : [country];
     const catalogs = [];
 
@@ -254,14 +254,14 @@ function buildManifest(country = "Global", multiCountries = []) {
     for (const c of list) {
         if (c.toLowerCase() === "global") {
             catalogs.push(
-                { type: "movie", id: "netflix_top10_movies_global", name: "Netflix Top 10 (Global)" },
-                { type: "TV Shows", id: "netflix_top10_series_global", name: "Netflix Top 10 (Global)" }
+                { type: movieType, id: "netflix_top10_movies_global", name: "Netflix Top 10 (Global)" },
+                { type: seriesType, id: "netflix_top10_series_global", name: "Netflix Top 10 (Global)" }
             );
         } else {
             const idSlug = toIdSlug(c);
             catalogs.push(
-                { type: "movie", id: `netflix_top10_movies_${idSlug}`, name: `Netflix Top 10 (${c})` },
-                { type: "TV Shows", id: `netflix_top10_series_${idSlug}`, name: `Netflix Top 10 (${c})` }
+                { type: movieType, id: `netflix_top10_movies_${idSlug}`, name: `Netflix Top 10 (${c})` },
+                { type: seriesType, id: `netflix_top10_series_${idSlug}`, name: `Netflix Top 10 (${c})` }
             );
         }
     }
@@ -272,7 +272,7 @@ function buildManifest(country = "Global", multiCountries = []) {
         name: "Netflix Top 10",
         description: "Weekly updated Netflix Top 10 rankings per-country with precise Stremio catalogs.",
         logo: "https://img.icons8.com/color/256/netflix.png",
-        types: ["movie", "TV Shows"],
+        types: [...new Set([movieType, seriesType])],
         catalogs,
         resources: ["catalog"],
         behaviorHints: { configurable: true },
@@ -339,7 +339,9 @@ function parseConfig(configStr) {
             tmdbApiKey: config.tmdbApiKey.trim(),
             rpdbApiKey: config.rpdbApiKey?.trim() || null,
             country: mc[0] || "Global",
-            multiCountries: mc
+            multiCountries: mc,
+            movieType: config.movieType ? config.movieType.trim() : "movie",
+            seriesType: config.seriesType ? config.seriesType.trim() : "series"
         };
     } catch { return null; }
 }
@@ -456,6 +458,14 @@ async function buildConfigHTML(countries, latestWeek) {
             </div>
             <p class="hint">Adds Netflix-style rating overlays to posters. Get a key at <a href="https://ratingposterdb.com/" target="_blank">ratingposterdb.com</a>.</p>
         </div>
+        <div class="field" style="margin-bottom: 24px;">
+            <label>Catalog Tab Overrides <span class="optional-tag">optional</span></label>
+            <div style="display:flex; gap:10px;">
+                <input type="text" id="movieOverride" placeholder="Movie Tab Name (e.g. Films)">
+                <input type="text" id="seriesOverride" placeholder="Series Tab Name (e.g. TV Shows)">
+            </div>
+            <p class="hint">Isolate Netflix content into customizable Discover tabs. Leave empty to embed in Stremio's native categories.</p>
+        </div>
 
         <button class="btn btn-primary" id="generateBtn" onclick="generateLink()">Generate Install Link</button>
         <div id="resultArea">
@@ -564,7 +574,7 @@ async function buildConfigHTML(countries, latestWeek) {
     }
 
     function saveState() {
-        try { localStorage.setItem('nf_top10_config', JSON.stringify({ tmdbKey: document.getElementById('tmdbKey').value, rpdbKey: document.getElementById('rpdbKey').value, countries: selectedCountriesList })); } catch {}
+        try { localStorage.setItem('nf_top10_config', JSON.stringify({ tmdbKey: document.getElementById('tmdbKey').value, rpdbKey: document.getElementById('rpdbKey').value, movieOverride: document.getElementById('movieOverride').value, seriesOverride: document.getElementById('seriesOverride').value, countries: selectedCountriesList })); } catch {}
     }
 
     (function restoreState() {
@@ -576,6 +586,8 @@ async function buildConfigHTML(countries, latestWeek) {
                 s = {
                     tmdbKey: decoded.tmdbApiKey || "",
                     rpdbKey: decoded.rpdbApiKey || "",
+                    movieOverride: decoded.movieType && decoded.movieType !== "movie" ? decoded.movieType : "",
+                    seriesOverride: decoded.seriesType && decoded.seriesType !== "series" ? decoded.seriesType : "",
                     countries: decoded.country ? decoded.country.split(",").map(c=>c.trim()) : []
                 };
             } else {
@@ -588,6 +600,8 @@ async function buildConfigHTML(countries, latestWeek) {
         try {
             if (s.tmdbKey) document.getElementById('tmdbKey').value = s.tmdbKey;
             if (s.rpdbKey) document.getElementById('rpdbKey').value = s.rpdbKey;
+            if (s.movieOverride) document.getElementById('movieOverride').value = s.movieOverride;
+            if (s.seriesOverride) document.getElementById('seriesOverride').value = s.seriesOverride;
             if (s.countries && s.countries.length > 0) s.countries.forEach(c => addCountry(c)); else addCountry('Global');
         } catch { addCountry('Global'); }
     })();
@@ -610,6 +624,10 @@ async function buildConfigHTML(countries, latestWeek) {
         
         let cfg = { tmdbApiKey: tmdbKey, country: selectedCountriesList.join(',') };
         if (rpdbKey) cfg.rpdbApiKey = rpdbKey;
+        const mo = document.getElementById('movieOverride').value.trim();
+        const so = document.getElementById('seriesOverride').value.trim();
+        if (mo) cfg.movieType = mo;
+        if (so) cfg.seriesType = so;
         
         currentManifestUrl = window.location.origin + '/' + encodeURIComponent(JSON.stringify(cfg)) + '/manifest.json';
         document.getElementById('manifestDisplayUrl').textContent = currentManifestUrl;
@@ -668,16 +686,21 @@ module.exports = async (req, res) => {
 
     if (path.endsWith("/manifest.json")) {
         const configStr = path.replace("/manifest.json", "").replace(/^\//, "");
-        let cc = "Global", mcs = [];
-        try { const cfg = JSON.parse(decodeURIComponent(configStr)); if (cfg.country) { mcs = cfg.country.split(",").map(c=>c.trim()).filter(c=>c); cc = mcs[0]; } } catch {}
-        return res.status(200).setHeader("Content-Type", "application/json").json(buildManifest(cc, mcs));
+        let cc = "Global", mcs = [], mType = "movie", sType = "series";
+        try { 
+            const cfg = JSON.parse(decodeURIComponent(configStr)); 
+            if (cfg.country) { mcs = cfg.country.split(",").map(c=>c.trim()).filter(c=>c); cc = mcs[0]; } 
+            if (cfg.movieType) mType = cfg.movieType;
+            if (cfg.seriesType) sType = cfg.seriesType;
+        } catch {}
+        return res.status(200).setHeader("Content-Type", "application/json").json(buildManifest(cc, mcs, mType, sType));
     }
 
-    const match = path.match(/^\/(.*?)\/catalog\/(movie|series|TV%20Shows|TV Shows)\/([^/.]+)(?:\.json)?$/);
+    const match = path.match(/^\/(.*?)\/catalog\/([^/]+)\/([^/.]+)(?:\.json)?$/);
     if (match) {
         const config = parseConfig(match[1]);
         if (!config) return res.status(400).json({ error: "Missing/Invalid config" });
-        const catalogType = (match[2] === "TV Shows" || match[2] === "TV%20Shows") ? "series" : match[2];
+        const catalogType = match[3].includes("movies_") ? "movie" : "series";
         const metas = await buildCatalog(catalogType, match[3], config.tmdbApiKey, config.rpdbApiKey, config.country, config.multiCountries);
         return res.status(200).setHeader("Content-Type", "application/json").json({ metas });
     }
