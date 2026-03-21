@@ -343,7 +343,7 @@ function parseConfig(configStr) {
         };
     } catch { return null; }
 }
-async function buildConfigHTML(countries, latestWeek, prefill = null) {
+async function buildConfigHTML(countries, latestWeek) {
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -468,7 +468,6 @@ async function buildConfigHTML(countries, latestWeek, prefill = null) {
 </div>
 <script>
     const availableCountries = ["Global", ...${JSON.stringify(countries)}];
-    const serverPrefill = ${JSON.stringify(prefill)};
     let selectedCountriesList = [];
     const searchInput = document.getElementById('countrySearch');
     const dropdown = document.getElementById('countryDropdown');
@@ -570,15 +569,10 @@ async function buildConfigHTML(countries, latestWeek, prefill = null) {
 
     (function restoreState() {
         try {
-            const ls = JSON.parse(localStorage.getItem('nf_top10_config') || '{}');
-            const s = serverPrefill || {
-                tmdbApiKey: ls.tmdbKey,
-                rpdbApiKey: ls.rpdbKey,
-                multiCountries: ls.countries
-            };
-            if (s.tmdbApiKey) document.getElementById('tmdbKey').value = s.tmdbApiKey;
-            if (s.rpdbApiKey) document.getElementById('rpdbKey').value = s.rpdbApiKey;
-            if (s.multiCountries?.length) s.multiCountries.forEach(addCountry); else addCountry('Global');
+            const s = JSON.parse(localStorage.getItem('nf_top10_config') || '{}');
+            if (s.tmdbKey) document.getElementById('tmdbKey').value = s.tmdbKey;
+            if (s.rpdbKey) document.getElementById('rpdbKey').value = s.rpdbKey;
+            if (s.countries?.length) s.countries.forEach(addCountry); else addCountry('Global');
         } catch { addCountry('Global'); }
     })();
 
@@ -640,13 +634,8 @@ module.exports = async (req, res) => {
     if (path.startsWith('/api/index.js')) path = path.replace('/api/index.js', '');
     if (path === "") path = "/";
 
-    if (path === "/" || path.endsWith("/configure")) {
-        let pf = null;
-        if (path !== "/" && path !== "/configure") {
-            const configStr = path.replace("/configure", "").replace(/^\//, "");
-            pf = parseConfig(configStr);
-        }
-        return res.status(200).setHeader("Content-Type", "text/html;charset=UTF-8").send(await buildConfigHTML(await getAvailableCountries(), await getLatestWeekDate(), pf));
+    if (path === "/" || path === "/configure") {
+        return res.status(200).setHeader("Content-Type", "text/html;charset=UTF-8").send(await buildConfigHTML(await getAvailableCountries(), await getLatestWeekDate()));
     }
 
     if (path === "/health") {
