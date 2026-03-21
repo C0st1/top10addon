@@ -14,8 +14,13 @@ function getCached(key) {
     return { data: entry.data, stale: isStale };
 }
 
+function enforceCacheLimit(map, limit = 500) {
+    if (map.size > limit) map.delete(map.keys().next().value);
+}
+
 function setCache(key, data) {
     cache.set(key, { data, timestamp: Date.now() });
+    enforceCacheLimit(cache, 1000);
 }
 
 function getCacheSize() {
@@ -25,6 +30,19 @@ function getCacheSize() {
 // --- IMDB ID CACHE ---
 const imdbCache = new Map();
 
+async function fetchWithTimeout(url, opts = {}, ms = 8000) {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), ms);
+    try {
+        const res = await fetch(url, { ...opts, signal: controller.signal });
+        clearTimeout(id);
+        return res;
+    } catch (err) {
+        clearTimeout(id);
+        throw err;
+    }
+}
+
 function getImdbCacheKey(type, tmdbId) {
     return `${type}_${tmdbId}`;
 }
@@ -33,6 +51,7 @@ function getImdbCacheKey(type, tmdbId) {
 let parsedTsvCache = { parsed: null, tsvTimestamp: 0 };
 let rawTsvCache = { data: "", timestamp: 0 };
 const TSV_CACHE_TTL = 12 * 60 * 60 * 1000;
+let rawTsvFetchPromise = null;
 
 function getTsvTimestamp() {
     return rawTsvCache.timestamp;
@@ -42,17 +61,29 @@ async function fetchRawTSV() {
     if (rawTsvCache.data && Date.now() - rawTsvCache.timestamp < TSV_CACHE_TTL) {
         return rawTsvCache.data;
     }
-    try {
-        const url = "https://www.netflix.com/tudum/top10/data/all-weeks-countries.tsv";
-        const response = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
-        if (!response.ok) return rawTsvCache.data || "";
-        const data = await response.text();
-        rawTsvCache = { data, timestamp: Date.now() };
-        parsedTsvCache = { parsed: null, tsvTimestamp: 0 };
-        return data;
-    } catch {
-        return rawTsvCache.data || "";
-    }
+    if (rawTsvFetchPromise) return rawTsvFetchPromise;
+    rawTsvFetchPromise = (async () => {
+        try {
+            const url = "https://www.netflix.com/tudum/top10/data/all-weeks-countries.tsv";
+            const headers = { "User-Agent": "Mozilla/5.0" };
+            if (rawTsvCache.timestamp) headers["If-Modified-Since"] = new Date(rawTsvCache.timestamp).toUTCString();
+            const response = await fetchWithTimeout(url, { headers }, 12000);
+            if (response.status === 304) {
+                rawTsvCache.timestamp = Date.now();
+                return rawTsvCache.data;
+            }
+            if (!response.ok) return rawTsvCache.data || "";
+            const data = await response.text();
+            rawTsvCache = { data, timestamp: Date.now() };
+            parsedTsvCache = { parsed: null, tsvTimestamp: 0 };
+            return data;
+        } catch {
+            return rawTsvCache.data || "";
+        } finally {
+            rawTsvFetchPromise = null;
+        }
+    })();
+    return rawTsvFetchPromise;
 }
 
 function parseTSV(raw) {
@@ -86,25 +117,51 @@ function parseTSV(raw) {
         countriesSet.add(country);
         if (!data[country]) data[country] = {};
         if (!data[country][category]) data[country][category] = {};
-        if (!data[country][category][week]) data[country][category][week] = { titles: [] };
-
-        data[country][category][week].titles.push({ title, rank });
+        
+        const catData = data[country][category];
+        if (!catData.latestWeek || week > catData.latestWeek) {
+            catData.latestWeek = week;
+            catData[week] = { titles: [] };
+            for (const oldWeek in catData) {
+                if (oldWeek !== 'latestWeek' && oldWeek !== week) delete catData[oldWeek];
+            }
+        }
+        if (week === catData.latestWeek) {
+            catData[week].titles.push({ title, rank });
+        }
+        
         if (week > globalLatestWeek) globalLatestWeek = week;
     }
 
-    for (const country of Object.keys(data)) {
-        for (const category of Object.keys(data[country])) {
-            const weeks = Object.keys(data[country][category]).filter((k) => k !== "latestWeek").sort();
-            if (weeks.length > 0) data[country][category].latestWeek = weeks[weeks.length - 1];
+    const globalTitles = { "Films": new Map(), "TV": new Map() };
+    for (const c in data) {
+        for (const cat in data[c]) {
+            const lw = data[c][cat].latestWeek;
+            if (!lw || !data[c][cat][lw]) continue;
+            data[c][cat][lw].titles.sort((a,b) => a.rank - b.rank);
+            
+            const gMap = globalTitles[cat];
+            if (gMap) {
+                for (const t of data[c][cat][lw].titles) {
+                    const ex = gMap.get(t.title) || { count: 0, rankSum: 0 };
+                    ex.count++; ex.rankSum += t.rank;
+                    gMap.set(t.title, ex);
+                }
+            }
         }
     }
+    
+    const precomputedGlobals = {
+        "Films": [...globalTitles["Films"].entries()].sort((a, b) => b[1].count - a[1].count || a[1].rankSum / a[1].count - b[1].rankSum / b[1].count).slice(0, 10).map(([t]) => t),
+        "TV": [...globalTitles["TV"].entries()].sort((a, b) => b[1].count - a[1].count || a[1].rankSum / a[1].count - b[1].rankSum / b[1].count).slice(0, 10).map(([t]) => t)
+    };
 
-    return { countries: [...countriesSet].sort(), data, globalLatestWeek };
+    return { countries: [...countriesSet].sort(), data, globalLatestWeek, globalTitles: precomputedGlobals };
 }
 
 async function getParsedTSV() {
     const raw = await fetchRawTSV();
-    if (!raw) return parsedTsvCache.parsed || { countries: [], data: {}, globalLatestWeek: "" };
+    if (!raw) return parsedTsvCache.parsed || { countries: [], data: {}, globalLatestWeek: "", globalTitles: {} };
     if (!parsedTsvCache.parsed || parsedTsvCache.tsvTimestamp !== rawTsvCache.timestamp) {
         parsedTsvCache = { parsed: parseTSV(raw), tsvTimestamp: rawTsvCache.timestamp };
     }
@@ -122,20 +179,42 @@ async function getAvailableCountries() {
     return list;
 }
 
-const TITLE_OVERRIDES = { "The Race": "tt35052447" };
+const TITLE_OVERRIDES = { "the race": "tt35052447" };
+const tmdbMatchCache = new Map();
+const TMDB_MATCH_CACHE_TTL = 6 * 60 * 60 * 1000;
+const tmdbMatchInFlight = new Map();
+
+function getTmdbMatchCacheKey(title, type) {
+    return `${type}|${title.toLowerCase()}`;
+}
+
+function getCachedTmdbMatch(cacheKey) {
+    const hit = tmdbMatchCache.get(cacheKey);
+    if (!hit) return undefined;
+    if (Date.now() - hit.timestamp > TMDB_MATCH_CACHE_TTL) {
+        tmdbMatchCache.delete(cacheKey);
+        return undefined;
+    }
+    return hit.value;
+}
 
 function getRpdbPosterUrl(imdbId, rpdbApiKey) {
     if (!rpdbApiKey || !imdbId || !imdbId.startsWith("tt")) return null;
     return `https://api.ratingposterdb.com/${rpdbApiKey}/imdb/poster-default/${imdbId}.jpg`;
 }
 
-async function throttledMap(items, fn, concurrency = 3) {
+async function pMap(items, fn, concurrency = 5) {
     const results = [];
-    for (let i = 0; i < items.length; i += concurrency) {
-        const batchResults = await Promise.allSettled(items.slice(i, i + concurrency).map(fn));
-        results.push(...batchResults);
+    const executing = new Set();
+    for (const item of items) {
+        const p = Promise.resolve().then(() => fn(item));
+        results.push(p);
+        executing.add(p);
+        const clean = () => executing.delete(p);
+        p.then(clean).catch(clean);
+        if (executing.size >= concurrency) await Promise.race(executing);
     }
-    return results;
+    return Promise.all(results);
 }
 
 async function fetchNetflixTitles(categoryType, country = "Global") {
@@ -145,7 +224,7 @@ async function fetchNetflixTitles(categoryType, country = "Global") {
         const catData = parsed.data[country][categoryType];
         if (!catData.latestWeek || !catData[catData.latestWeek]) return [];
         
-        const entries = catData[catData.latestWeek].titles.slice().sort((a, b) => a.rank - b.rank);
+        const entries = catData[catData.latestWeek].titles;
         const seen = new Set();
         const result = [];
         for (const e of entries) {
@@ -158,47 +237,40 @@ async function fetchNetflixTitles(categoryType, country = "Global") {
     } catch { return []; }
 }
 
-
-
 async function fetchGlobalTitles(categoryType) {
     try {
         const parsed = await getParsedTSV();
-        const titleCounts = new Map();
-        for (const country of Object.keys(parsed.data)) {
-            const catData = parsed.data[country][categoryType];
-            if (!catData || !catData.latestWeek || !catData[catData.latestWeek]) continue;
-            const seen = new Set();
-            for (const entry of catData[catData.latestWeek].titles) {
-                if (seen.has(entry.title)) continue;
-                seen.add(entry.title);
-                const ex = titleCounts.get(entry.title) || { count: 0, rankSum: 0 };
-                ex.count++; ex.rankSum += entry.rank;
-                titleCounts.set(entry.title, ex);
-            }
-        }
-        return [...titleCounts.entries()]
-            .sort((a, b) => b[1].count - a[1].count || a[1].rankSum / a[1].count - b[1].rankSum / b[1].count)
-            .slice(0, 10).map(([t]) => t);
+        return parsed.globalTitles[categoryType] || [];
     } catch { return []; }
 }
-async function matchTMDB(title, type, apiKey, rpdbApiKey) {
+async function matchTMDB(title, type, apiKey) {
     if (!apiKey) return null;
+    const cacheKey = getTmdbMatchCacheKey(title, type);
+    const cached = getCachedTmdbMatch(cacheKey);
+    if (cached !== undefined) return cached;
+    if (tmdbMatchInFlight.has(cacheKey)) return tmdbMatchInFlight.get(cacheKey);
+
+    const run = (async () => {
     try {
-        const cleanTitle = title.replace(/: Season \d+/gi, "").replace(/ - Season \d+/gi, "").trim();
+        const cleanTitle = title.replace(/[:\-]?\s*Season\s+\d+/gi, "").trim();
+        const cleanTitleLower = cleanTitle.toLowerCase();
         
-        if (TITLE_OVERRIDES[cleanTitle]) {
-            const res = await fetch(`https://api.themoviedb.org/3/find/${TITLE_OVERRIDES[cleanTitle]}?api_key=${apiKey}&external_source=imdb_id`);
+        if (TITLE_OVERRIDES[cleanTitleLower]) {
+            const res = await fetchWithTimeout(`https://api.themoviedb.org/3/find/${TITLE_OVERRIDES[cleanTitleLower]}?api_key=${apiKey}&external_source=imdb_id`);
             if (res.ok) {
                 const data = await res.json();
                 const matched = type === "tv" ? data.tv_results?.[0] : data.movie_results?.[0];
                 if (matched) {
-                    return formatMeta(matched, TITLE_OVERRIDES[cleanTitle], type, rpdbApiKey);
+                    const meta = formatMeta(matched, TITLE_OVERRIDES[cleanTitleLower], type);
+                    tmdbMatchCache.set(cacheKey, { value: meta, timestamp: Date.now() });
+                    enforceCacheLimit(tmdbMatchCache, 2000);
+                    return meta;
                 }
             }
         }
 
-        const sRes = await fetch(`https://api.themoviedb.org/3/search/${type}?api_key=${apiKey}&query=${encodeURIComponent(cleanTitle)}&language=en-US&page=1`);
-        if (!sRes.ok) return null;
+        const sRes = await fetchWithTimeout(`https://api.themoviedb.org/3/search/${type}?api_key=${apiKey}&query=${encodeURIComponent(cleanTitle)}&language=en-US&page=1`);
+        if (!sRes.ok) throw new Error("TMDB Search Failed");
         const sData = await sRes.json();
         
         if (sData.results?.length > 0) {
@@ -206,8 +278,7 @@ async function matchTMDB(title, type, apiKey, rpdbApiKey) {
             const exact = candidates.filter(i => {
                 const itemT = (type === "tv" ? i.name : i.title)?.toLowerCase();
                 const origT = (type === "tv" ? i.original_name : i.original_title)?.toLowerCase();
-                const ct = cleanTitle.toLowerCase();
-                return itemT === ct || origT === ct;
+                return itemT === cleanTitleLower || origT === cleanTitleLower;
             });
             const best = exact.length > 0 ? exact.sort((a,b) => new Date(b.release_date||b.first_air_date||"1900-01-01") - new Date(a.release_date||a.first_air_date||"1900-01-01"))[0] : candidates[0];
             
@@ -216,28 +287,44 @@ async function matchTMDB(title, type, apiKey, rpdbApiKey) {
             if (imdbCache.has(cKey)) finalId = imdbCache.get(cKey);
             else {
                 try {
-                    const extRes = await fetch(`https://api.themoviedb.org/3/${type}/${best.id}?api_key=${apiKey}&append_to_response=external_ids`);
+                    const extRes = await fetchWithTimeout(`https://api.themoviedb.org/3/${type}/${best.id}?api_key=${apiKey}&append_to_response=external_ids`);
                     if (extRes.ok) {
                         const extData = await extRes.json();
                         const imdbId = extData.external_ids?.imdb_id || extData.imdb_id;
-                        if (imdbId) { finalId = imdbId; imdbCache.set(cKey, imdbId); }
+                        if (imdbId) { finalId = imdbId; imdbCache.set(cKey, imdbId); enforceCacheLimit(imdbCache, 5000); }
                     }
                 } catch {}
             }
             
-            return formatMeta(best, finalId, type, rpdbApiKey);
+            const meta = formatMeta(best, finalId, type);
+            tmdbMatchCache.set(cacheKey, { value: meta, timestamp: Date.now() });
+            enforceCacheLimit(tmdbMatchCache, 2000);
+            return meta;
         }
-    } catch {}
-    return null;
+        
+        tmdbMatchCache.set(cacheKey, { value: null, timestamp: Date.now() });
+        enforceCacheLimit(tmdbMatchCache, 2000);
+        return null;
+    } catch {
+        return null;
+    }
+    })();
+
+    tmdbMatchInFlight.set(cacheKey, run);
+    try {
+        return await run;
+    } finally {
+        tmdbMatchInFlight.delete(cacheKey);
+    }
 }
 
-function formatMeta(item, finalId, type, rpdbApiKey) {
+function formatMeta(item, finalId, type) {
     const tmdbP = item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : null;
     return {
         id: finalId,
         type: type === "tv" ? "series" : "movie",
         name: item.title || item.name,
-        poster: getRpdbPosterUrl(finalId, rpdbApiKey) || tmdbP,
+        tmdbPoster: tmdbP,
         background: item.backdrop_path ? `https://image.tmdb.org/t/p/w1280${item.backdrop_path}` : null,
         description: item.overview || "",
         releaseInfo: (item.release_date || item.first_air_date || "").substring(0, 4),
@@ -283,17 +370,25 @@ function buildManifest(country = "Global", multiCountries = [], movieType = "mov
 }
 
 async function buildCatalog(type, catalogId, apiKey, rpdbApiKey, country, multiCountries) {
-    const cacheKey = `${type}_${catalogId}_${rpdbApiKey || "no_rpdb"}`;
+    const cacheKey = `${type}_${catalogId}`;
     const cached = getCached(cacheKey);
-    if (cached.data && !cached.stale) return cached.data;
-    if (cached.data && cached.stale) {
-        fetchCatalogFresh(cacheKey, type, catalogId, apiKey, rpdbApiKey, multiCountries).catch(() => {});
-        return cached.data;
+    let metas = cached.data;
+    
+    if (!metas || cached.stale) {
+        if (cached.data && cached.stale) {
+            fetchCatalogFresh(cacheKey, type, catalogId, apiKey, multiCountries).catch(() => {});
+        } else {
+            metas = await fetchCatalogFresh(cacheKey, type, catalogId, apiKey, multiCountries);
+        }
     }
-    return await fetchCatalogFresh(cacheKey, type, catalogId, apiKey, rpdbApiKey, multiCountries);
+    
+    return (metas || []).map(m => {
+        const rpdbP = getRpdbPosterUrl(m.id, rpdbApiKey);
+        return { ...m, poster: rpdbP || m.tmdbPoster, tmdbPoster: undefined };
+    });
 }
 
-async function fetchCatalogFresh(cacheKey, type, catalogId, apiKey, rpdbApiKey, multiCountries) {
+async function fetchCatalogFresh(cacheKey, type, catalogId, apiKey, multiCountries) {
     const isGlobal = catalogId.endsWith("_global");
     const tmdbType = type === "movie" ? "movie" : "tv";
     const categoryType = type === "movie" ? "Films" : "TV";
@@ -312,9 +407,8 @@ async function fetchCatalogFresh(cacheKey, type, catalogId, apiKey, rpdbApiKey, 
 
     if (titles.length === 0) return [];
 
-    const metas = (await throttledMap(titles, (title) => matchTMDB(title, tmdbType, apiKey, rpdbApiKey, categoryType, targetCountry), 3))
-        .filter(r => r.status === "fulfilled" && r.value)
-        .map(r => r.value);
+    const metas = (await pMap(titles, (title) => matchTMDB(title, tmdbType, apiKey), 5))
+        .filter(v => v !== null && v !== undefined);
     
     if (metas.length > 0) setCache(cacheKey, metas);
     return metas;
@@ -764,25 +858,37 @@ module.exports = async (req, res) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-    if (req.method === "OPTIONS") return res.status(200).end();
+    if (req.method === "OPTIONS") {
+        res.setHeader("Access-Control-Max-Age", "86400");
+        return res.status(200).end();
+    }
 
     let path = req.url;
     if (path.startsWith('/api/index.js')) path = path.replace('/api/index.js', '');
     if (path === "") path = "/";
 
     if (path === "/" || path === "/configure" || path.endsWith("/configure")) {
-        return res.status(200).setHeader("Content-Type", "text/html;charset=UTF-8").send(await buildConfigHTML(await getAvailableCountries(), await getLatestWeekDate()));
+        const [countries, latestWeek] = await Promise.all([getAvailableCountries(), getLatestWeekDate()]);
+        return res.status(200).setHeader("Content-Type", "text/html;charset=UTF-8").send(await buildConfigHTML(countries, latestWeek));
     }
 
     if (path === "/health") {
         const tsvTs = getTsvTimestamp();
+        res.setHeader("Cache-Control", "no-cache");
         return res.status(200).json({ status: "ok", lastTsvFetch: tsvTs > 0 ? new Date(tsvTs).toISOString() : null, time: new Date().toISOString() });
     }
 
     if (path === "/validate-tmdb-key" && req.method === "POST") {
         let body = {};
         if (req.body) body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
-        else try { const bufs = []; for await (const c of req) bufs.push(c); body = JSON.parse(Buffer.concat(bufs).toString()); } catch {}
+        else try { 
+            const bufs = []; let length = 0;
+            for await (const c of req) {
+                bufs.push(c); length += c.length;
+                if (length > 1e5) break; 
+            } 
+            body = JSON.parse(Buffer.concat(bufs).toString()); 
+        } catch {}
         return res.status(200).json(await validateTmdbKey(body.apiKey || ""));
     }
 
@@ -795,6 +901,7 @@ module.exports = async (req, res) => {
             if (cfg.movieType) mType = cfg.movieType;
             if (cfg.seriesType) sType = cfg.seriesType;
         } catch {}
+        res.setHeader("Cache-Control", "public, max-age=14400, stale-while-revalidate=43200");
         return res.status(200).setHeader("Content-Type", "application/json").json(buildManifest(cc, mcs, mType, sType));
     }
 
@@ -804,6 +911,7 @@ module.exports = async (req, res) => {
         if (!config) return res.status(400).json({ error: "Missing/Invalid config" });
         const catalogType = match[3].includes("movies_") ? "movie" : "series";
         const metas = await buildCatalog(catalogType, match[3], config.tmdbApiKey, config.rpdbApiKey, config.country, config.multiCountries);
+        res.setHeader("Cache-Control", "public, max-age=14400, stale-while-revalidate=43200");
         return res.status(200).setHeader("Content-Type", "application/json").json({ metas });
     }
 
