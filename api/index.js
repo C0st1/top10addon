@@ -406,7 +406,8 @@ async function buildConfigHTML(countries, latestWeek) {
         .btn-primary { background: var(--red); color: #fff; }
         .btn-primary:hover:not(:disabled) { background: #f40612; box-shadow: 0 6px 20px rgba(229,9,20,0.35); }
         .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); margin-top: 10px; }
-        .btn-sm { display: inline-block; width: auto; padding: 8px 14px; font-size: 12px; margin-top: 6px; }
+        .btn-sm { display: inline-block; width: auto; padding: 8px 18px; font-size: 12px; font-weight: 500; margin-top: 6px; background: rgba(255,255,255,0.1); color: #ccc; border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; }
+        .btn-sm:hover { background: rgba(255,255,255,0.2); color: #fff; border-color: rgba(255,255,255,0.3); }
         .key-status { display: inline-flex; font-size: 12px; margin-left: 8px; }
         .key-status.valid { color: var(--success); } .key-status.invalid { color: var(--red); }
         #resultArea { display: none; margin-top: 24px; animation: popIn 0.3s ease; }
