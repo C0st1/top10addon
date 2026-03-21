@@ -425,9 +425,9 @@ async function buildConfigHTML(countries, latestWeek) {
         .field-row { display: flex; flex-direction: column; gap: 0; }
         
         .tooltip-container { position: relative; display: inline-block; margin-left: 6px; }
-        .tooltip-icon { background: rgba(255,255,255,0.1); color: #aaa; border-radius: 50%; width: 15px; height: 15px; display: flex; align-items: center; justify-content: center; font-size: 10px; cursor: help; }
+        .tooltip-icon { background: rgba(255,255,255,0.1); color: #aaa; border-radius: 50%; width: 15px; height: 15px; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; cursor: help; text-decoration: none; }
         .tooltip-container:hover .tooltip-icon { background: rgba(255,255,255,0.2); color: #fff; }
-        .tooltip-content { visibility: hidden; opacity: 0; position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(100% + 8px); background: #222; color: #fff; padding: 8px 12px; border-radius: 6px; font-size: 12px; white-space: nowrap; z-index: 100; font-weight: normal; box-shadow: 0 4px 12px rgba(0,0,0,0.5); transition: 0.15s; pointer-events: none; border: 1px solid #333; }
+        .tooltip-content { visibility: hidden; opacity: 0; position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(100% + 8px); background: #222; color: #fff; padding: 8px 12px; border-radius: 6px; font-size: 12px; white-space: nowrap; z-index: 100; font-weight: normal; text-transform: none; line-height: 1.4; box-shadow: 0 4px 12px rgba(0,0,0,0.5); transition: 0.15s; pointer-events: none; border: 1px solid #333; }
         .tooltip-content a { color: #5c9eff; text-decoration: none; pointer-events: auto; font-weight: bold; }
         .tooltip-content a:hover { text-decoration: underline; }
         .tooltip-container:hover .tooltip-content { visibility: visible; opacity: 1; pointer-events: auto; }
@@ -480,8 +480,8 @@ async function buildConfigHTML(countries, latestWeek) {
         <div class="field">
             <label><span class="required-dot"></span> TMDB API Key 
                 <div class="tooltip-container">
-                    <span class="tooltip-icon">?</span>
-                    <div class="tooltip-content">Required for metadata. Get yours free at <a href="https://www.themoviedb.org/settings/api" target="_blank">themoviedb.org</a></div>
+                    <a href="https://www.themoviedb.org/settings/api" target="_blank" class="tooltip-icon">?</a>
+                    <div class="tooltip-content">Required for metadata.<br>Get yours free at <b style="color:#5c9eff;">themoviedb.org</b></div>
                 </div>
             </label>
             <div class="input-with-icon">
@@ -497,8 +497,8 @@ async function buildConfigHTML(countries, latestWeek) {
                 <div class="field">
                     <label>RPDB API Key <span class="optional-tag">optional</span> 
                         <div class="tooltip-container">
-                            <span class="tooltip-icon">?</span>
-                            <div class="tooltip-content">Adds Netflix-style rating overlays to posters. Get yours at <a href="https://ratingposterdb.com/" target="_blank">ratingposterdb.com</a></div>
+                            <a href="https://ratingposterdb.com/" target="_blank" class="tooltip-icon">?</a>
+                            <div class="tooltip-content">Adds Netflix-style rating overlays to posters.<br>Get yours at <b style="color:#5c9eff;">ratingposterdb.com</b></div>
                         </div>
                     </label>
                     <div class="input-with-icon">
@@ -535,7 +535,7 @@ async function buildConfigHTML(countries, latestWeek) {
     </div>
 </div>
 <div class="footer">
-    Netflix Top 10 Stremio Addon &nbsp;&bull;&nbsp; <a href="https://github.com/stremio/stremio-addon-sdk" target="_blank">Verified Serverless Transport</a>
+    Netflix Top 10 Stremio Addon &nbsp;&bull;&nbsp; <a href="https://github.com/C0st1/top10addon" target="_blank">View on GitHub</a>
 </div>
 <script>
     const availableCountries = ["Global", ...${JSON.stringify(countries)}];
