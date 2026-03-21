@@ -180,6 +180,24 @@ async function getAvailableCountries() {
 }
 
 const TITLE_OVERRIDES = { "the race": "tt35052447" };
+
+const COUNTRY_LANG_MAP = {
+    "Argentina": "es-AR", "Australia": "en-AU", "Austria": "de-AT",
+    "Belgium": "nl-BE", "Brazil": "pt-BR", "Canada": "en-CA",
+    "Chile": "es-CL", "Colombia": "es-CO", "Czech Republic": "cs-CZ",
+    "Denmark": "da-DK", "Finland": "fi-FI", "France": "fr-FR",
+    "Germany": "de-DE", "Greece": "el-GR", "Hong Kong": "zh-HK",
+    "Hungary": "hu-HU", "India": "hi-IN", "Indonesia": "id-ID",
+    "Ireland": "en-IE", "Israel": "he-IL", "Italy": "it-IT",
+    "Japan": "ja-JP", "Malaysia": "ms-MY", "Mexico": "es-MX",
+    "Netherlands": "nl-NL", "New Zealand": "en-NZ", "Norway": "no-NO",
+    "Peru": "es-PE", "Philippines": "tl-PH", "Poland": "pl-PL",
+    "Portugal": "pt-PT", "Romania": "ro-RO", "Singapore": "zh-SG",
+    "Slovakia": "sk-SK", "South Africa": "en-ZA", "South Korea": "ko-KR",
+    "Spain": "es-ES", "Sweden": "sv-SE", "Switzerland": "de-CH",
+    "Taiwan": "zh-TW", "Thailand": "th-TH", "Turkey": "tr-TR",
+    "United Kingdom": "en-GB", "United States": "en-US", "Vietnam": "vi-VN"
+};
 const tmdbMatchCache = new Map();
 const TMDB_MATCH_CACHE_TTL = 6 * 60 * 60 * 1000;
 const tmdbMatchInFlight = new Map();
@@ -243,7 +261,7 @@ async function fetchGlobalTitles(categoryType) {
         return parsed.globalTitles[categoryType] || [];
     } catch { return []; }
 }
-async function matchTMDB(title, type, apiKey) {
+async function matchTMDB(title, type, apiKey, country = "Global") {
     if (!apiKey) return null;
     const cacheKey = getTmdbMatchCacheKey(title, type);
     const cached = getCachedTmdbMatch(cacheKey);
@@ -252,9 +270,13 @@ async function matchTMDB(title, type, apiKey) {
 
     const run = (async () => {
     try {
-        const cleanTitle = title.replace(/[:\-]?\s*Season\s+\d+/gi, "").trim();
+        // Smart cleaning: strip "Season X", "Limited Series", "Part X", "Volume X", etc.
+        const cleanTitle = title
+            .replace(/[:\-]?\s*(?:Season\s+\d+|Limited\s+Series|Part\s+\d+|Volume\s+\d+).*$/gi, "")
+            .trim();
         const cleanTitleLower = cleanTitle.toLowerCase();
-        
+
+        // 1. Manual override check
         if (TITLE_OVERRIDES[cleanTitleLower]) {
             const res = await fetchWithTimeout(`https://api.themoviedb.org/3/find/${TITLE_OVERRIDES[cleanTitleLower]}?api_key=${apiKey}&external_source=imdb_id`);
             if (res.ok) {
@@ -269,19 +291,38 @@ async function matchTMDB(title, type, apiKey) {
             }
         }
 
-        const sRes = await fetchWithTimeout(`https://api.themoviedb.org/3/search/${type}?api_key=${apiKey}&query=${encodeURIComponent(cleanTitle)}&language=en-US&page=1`);
-        if (!sRes.ok) throw new Error("TMDB Search Failed");
-        const sData = await sRes.json();
-        
-        if (sData.results?.length > 0) {
-            const candidates = sData.results.slice(0, 5);
-            const exact = candidates.filter(i => {
+        // 2. Determine language code for this country
+        const langCode = COUNTRY_LANG_MAP[country] || "en-US";
+
+        const performSearch = async (lang) => {
+            const url = `https://api.themoviedb.org/3/search/${type}?api_key=${apiKey}&query=${encodeURIComponent(cleanTitle)}&language=${lang}&page=1`;
+            const sRes = await fetchWithTimeout(url);
+            return sRes.ok ? (await sRes.json()).results : [];
+        };
+
+        // 3. Search with local language, fallback to en-US
+        let results = await performSearch(langCode);
+        if ((!results || results.length === 0) && langCode !== "en-US") {
+            results = await performSearch("en-US");
+        }
+
+        if (results && results.length > 0) {
+            const exactMatches = results.filter(i => {
                 const itemT = (type === "tv" ? i.name : i.title)?.toLowerCase();
                 const origT = (type === "tv" ? i.original_name : i.original_title)?.toLowerCase();
                 return itemT === cleanTitleLower || origT === cleanTitleLower;
             });
-            const best = exact.length > 0 ? exact.sort((a,b) => new Date(b.release_date||b.first_air_date||"1900-01-01") - new Date(a.release_date||a.first_air_date||"1900-01-01"))[0] : candidates[0];
-            
+
+            // Use exact matches if found, otherwise top 3 results
+            const candidates = exactMatches.length > 0 ? exactMatches : results.slice(0, 3);
+
+            // 4. Recency tie-breaker: prefer the most recent title
+            const best = candidates.sort((a, b) => {
+                const dateA = new Date(a.release_date || a.first_air_date || "1900-01-01");
+                const dateB = new Date(b.release_date || b.first_air_date || "1900-01-01");
+                return dateB - dateA;
+            })[0];
+
             let finalId = `tmdb:${best.id}`;
             const cKey = getImdbCacheKey(type, best.id);
             if (imdbCache.has(cKey)) finalId = imdbCache.get(cKey);
@@ -295,17 +336,18 @@ async function matchTMDB(title, type, apiKey) {
                     }
                 } catch {}
             }
-            
+
             const meta = formatMeta(best, finalId, type);
             tmdbMatchCache.set(cacheKey, { value: meta, timestamp: Date.now() });
             enforceCacheLimit(tmdbMatchCache, 2000);
             return meta;
         }
-        
+
         tmdbMatchCache.set(cacheKey, { value: null, timestamp: Date.now() });
         enforceCacheLimit(tmdbMatchCache, 2000);
         return null;
-    } catch {
+    } catch (err) {
+        console.error("Match Error:", err);
         return null;
     }
     })();
@@ -407,7 +449,7 @@ async function fetchCatalogFresh(cacheKey, type, catalogId, apiKey, multiCountri
 
     if (titles.length === 0) return [];
 
-    const metas = (await pMap(titles, (title) => matchTMDB(title, tmdbType, apiKey), 5))
+    const metas = (await pMap(titles, (title) => matchTMDB(title, tmdbType, apiKey, targetCountry), 5))
         .filter(v => v !== null && v !== undefined);
     
     if (metas.length > 0) setCache(cacheKey, metas);
