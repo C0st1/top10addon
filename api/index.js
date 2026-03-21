@@ -423,6 +423,23 @@ async function buildConfigHTML(countries, latestWeek) {
         .toggle-pwd:hover { opacity: 1; transform: scale(1.1); }
         
         .field-row { display: flex; flex-direction: column; gap: 0; }
+        
+        .tooltip-icon { display: inline-block; background: rgba(255,255,255,0.1); color: #aaa; border-radius: 50%; width: 14px; height: 14px; text-align: center; font-size: 10px; line-height: 14px; margin-left: 6px; cursor: help; position: relative; }
+        .tooltip-icon:hover::after { content: attr(data-tooltip); position: absolute; left: 50%; transform: translateX(-50%); bottom: 140%; background: #222; color: #fff; padding: 6px 10px; border-radius: 4px; font-size: 12px; white-space: nowrap; z-index: 10; font-weight: normal; box-shadow: 0 4px 12px rgba(0,0,0,0.5); pointer-events: none; }
+        
+        details.advanced-settings { margin-top: 10px; border: 1px solid var(--border); border-radius: 6px; background: rgba(0,0,0,0.1); }
+        details.advanced-settings summary { padding: 12px 16px; cursor: pointer; user-select: none; font-weight: 500; outline: none; font-size: 14px; }
+        details.advanced-settings summary:hover { background: rgba(255,255,255,0.05); }
+        .advanced-settings-content { padding: 16px; border-top: 1px solid var(--border); }
+        
+        .btn-group { display: flex; gap: 12px; margin-top: 24px; }
+        .btn-danger { background: transparent; border: 1px solid #aaa; color: #aaa; }
+        .btn-danger:hover { background: rgba(255, 255, 255, 0.1); color: #eee; }
+        
+        .footer { text-align: center; margin-top: 24px; font-size: 13px; color: #666; width: 100%; max-width: 900px; }
+        .footer a { color: #888; text-decoration: none; }
+        .footer a:hover { color: #fff; text-decoration: underline; }
+
         @media (min-width: 800px) {
             .card { max-width: 900px; display: flex; flex-direction: row; }
             .card-header { width: 360px; flex-shrink: 0; border-bottom: none; border-right: 1px solid var(--border); padding: 48px; display: flex; flex-direction: column; justify-content: center; }
@@ -442,43 +459,48 @@ async function buildConfigHTML(countries, latestWeek) {
     </div>
     <div class="card-body">
         <div class="field">
-            <label><span class="required-dot"></span> Country <span class="optional-tag">Reorderable Catalogs</span></label>
+            <label><span class="required-dot"></span> Country <span class="optional-tag">Reorderable Catalogs</span> <span class="tooltip-icon" data-tooltip="Click or search to select. Drag tags to re-order Stremio catalogs.">?</span></label>
             <div class="custom-select">
                 <input type="text" id="countrySearch" placeholder="Search a country to add..." autocomplete="off">
                 <div class="dropdown-list" id="countryDropdown"></div>
             </div>
             <div class="multi-countries" id="selectedCountries"></div>
-            <p class="hint">Click or search to select. <b>Drag to re-order</b> which catalogs appear first in Stremio.</p>
         </div>
-        <div class="field-row">
-            <div class="field">
-                <label><span class="required-dot"></span> TMDB API Key</label>
-                <div class="input-with-icon">
-                    <input type="password" id="tmdbKey" placeholder="e.g. 8a7f3bc2d1...">
-                    <button class="toggle-pwd" onclick="togglePwd('tmdbKey', this)" title="Show/Hide">👁️</button>
+        
+        <div class="field">
+            <label><span class="required-dot"></span> TMDB API Key <span class="tooltip-icon" data-tooltip="Required for metadata. Get yours free at themoviedb.org">?</span></label>
+            <div class="input-with-icon">
+                <input type="password" id="tmdbKey" placeholder="e.g. 8a7f3bc2d1...">
+                <button class="toggle-pwd" onclick="togglePwd('tmdbKey', this)" title="Show/Hide">👁️</button>
+            </div>
+            <div style="margin-top:6px;"><button class="btn btn-sm" id="testKeyBtn" onclick="testTmdbKey()">Test Key</button> <span id="keyStatus" class="key-status"></span></div>
+        </div>
+        
+        <details class="advanced-settings">
+            <summary>⚙️ Advanced Settings</summary>
+            <div class="advanced-settings-content">
+                <div class="field">
+                    <label>RPDB API Key <span class="optional-tag">optional</span> <span class="tooltip-icon" data-tooltip="Adds Netflix-style rating overlays to posters. ratingposterdb.com">?</span></label>
+                    <div class="input-with-icon">
+                        <input type="password" id="rpdbKey" placeholder="e.g. t1-xxxxxx...">
+                        <button class="toggle-pwd" onclick="togglePwd('rpdbKey', this)" title="Show/Hide">👁️</button>
+                    </div>
+                    <div style="margin-top:6px;"><button class="btn btn-sm" id="testRpdbBtn" onclick="testRpdbKey()">Test Format</button> <span id="rpdbStatus" class="key-status"></span></div>
                 </div>
-                <p class="hint" style="margin-bottom:8px;">Required for Stremio metadata. Get yours free at <a href="https://www.themoviedb.org/settings/api" target="_blank">themoviedb.org</a>.</p>
-                <button class="btn btn-sm" id="testKeyBtn" onclick="testTmdbKey()">Test Key</button> <span id="keyStatus" class="key-status"></span>
-            </div>
-            <div class="field">
-                <label>RPDB API Key <span class="optional-tag">optional</span></label>
-                <div class="input-with-icon">
-                    <input type="password" id="rpdbKey" placeholder="e.g. t1-xxxxxx...">
-                    <button class="toggle-pwd" onclick="togglePwd('rpdbKey', this)" title="Show/Hide">👁️</button>
+                <div class="field" style="margin-bottom: 0;">
+                    <label>Catalog Tab Overrides <span class="optional-tag">optional</span> <span class="tooltip-icon" data-tooltip="Isolate Netflix content into customizable Discover tabs.">?</span></label>
+                    <div class="field-row" style="margin-bottom:0; gap:10px;">
+                        <input type="text" id="movieOverride" placeholder="Movie Tab Name (e.g. Films)">
+                        <input type="text" id="seriesOverride" placeholder="Series Tab Name (e.g. TV Shows)">
+                    </div>
                 </div>
-                <p class="hint">Adds Netflix-style rating overlays to posters. Get a key at <a href="https://ratingposterdb.com/" target="_blank">ratingposterdb.com</a>.</p>
             </div>
-        </div>
-        <div class="field" style="margin-bottom: 24px;">
-            <label>Catalog Tab Overrides <span class="optional-tag">optional</span></label>
-            <div class="field-row" style="margin-bottom:0; gap:10px;">
-                <input type="text" id="movieOverride" placeholder="Movie Tab Name (e.g. Films)">
-                <input type="text" id="seriesOverride" placeholder="Series Tab Name (e.g. TV Shows)">
-            </div>
-            <p class="hint" style="margin-top:10px;">Isolate Netflix content into customizable Discover tabs. Leave empty to embed in Stremio's native categories.</p>
-        </div>
+        </details>
 
-        <button class="btn btn-primary" id="generateBtn" onclick="generateLink()">Generate Install Link</button>
+        <div class="btn-group">
+            <button class="btn btn-primary" id="generateBtn" onclick="generateLink()" style="flex: 2;">Generate Install Link</button>
+            <button class="btn btn-danger" onclick="resetForm()" style="flex: 1;" title="Clear Configuration">Reset Form</button>
+        </div>
         <div id="resultArea">
             <p style="font-size:12px;color:#999;">Manifest URL:</p>
             <div class="url-box"><span class="url-box-text" id="manifestDisplayUrl"></span><button class="copy-btn" onclick="copyLink()">Copy</button></div>
@@ -486,6 +508,9 @@ async function buildConfigHTML(countries, latestWeek) {
             <button class="btn btn-secondary" onclick="installDirectly()">▶ Install to Stremio</button>
         </div>
     </div>
+</div>
+<div class="footer">
+    Netflix Top 10 Stremio Addon • <a href="https://github.com/stremio/stremio-addon-sdk" target="_blank">Verified Serverless Transport</a>
 </div>
 <script>
     const availableCountries = ["Global", ...${JSON.stringify(countries)}];
@@ -620,10 +645,42 @@ async function buildConfigHTML(countries, latestWeek) {
     async function testTmdbKey() { /* Redacted visual updates for brevity, keeps core API call */
         const key = document.getElementById('tmdbKey').value.trim();
         const stat = document.getElementById('keyStatus');
-        if (!key) return; stat.textContent = 'Testing...';
+        if (!key) { stat.textContent = '❌ Key is empty'; stat.className = 'key-status error'; return; }
+        stat.textContent = 'Testing...';
         try { const r = await fetch('/api/index.js/validate-tmdb-key', { method: 'POST', body: JSON.stringify({ apiKey: key }) });
-              const d = await r.json(); stat.textContent = d.valid ? '✅ Valid' : '❌ Invalid'; } 
+              const d = await r.json(); stat.textContent = d.valid ? '✅ Valid key' : '❌ Invalid key'; } 
         catch { stat.textContent = '❌ Error'; }
+    }
+    
+    function testRpdbKey() {
+        const key = document.getElementById('rpdbKey').value.trim();
+        const stat = document.getElementById('rpdbStatus');
+        if (!key) { stat.textContent = '❌ Key is empty'; stat.className = 'key-status error'; return; }
+        stat.className = 'key-status';
+        if (/^t\d-[a-zA-Z0-9]+$/.test(key)) {
+            stat.textContent = '✅ Format looks good';
+            stat.className = 'key-status success';
+        } else {
+            stat.textContent = '⚠️ Double check format';
+            stat.className = 'key-status error';
+        }
+    }
+    
+    function resetForm() {
+        if (!confirm("Are you sure you want to completely wipe your configuration?")) return;
+        document.getElementById('tmdbKey').value = '';
+        document.getElementById('rpdbKey').value = '';
+        document.getElementById('movieOverride').value = '';
+        document.getElementById('seriesOverride').value = '';
+        document.getElementById('keyStatus').textContent = '';
+        document.getElementById('rpdbStatus').textContent = '';
+        document.getElementById('resultArea').style.display = 'none';
+        
+        localStorage.removeItem('nf_top10_config');
+        selectedCountriesList = [];
+        addCountry('Global');
+        searchInput.value = '';
+        renderDropdown('');
     }
 
     let currentManifestUrl = "";
