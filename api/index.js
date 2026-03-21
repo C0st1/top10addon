@@ -254,14 +254,14 @@ function buildManifest(country = "Global", multiCountries = []) {
     for (const c of list) {
         if (c.toLowerCase() === "global") {
             catalogs.push(
-                { type: "movie", id: "netflix_top10_movies_global", name: "Netflix Top 10 Movies (Global)" },
-                { type: "TV Shows", id: "netflix_top10_series_global", name: "Netflix Top 10 TV Shows (Global)" }
+                { type: "movie", id: "netflix_top10_movies_global", name: "Netflix Top 10 (Global)" },
+                { type: "TV Shows", id: "netflix_top10_series_global", name: "Netflix Top 10 (Global)" }
             );
         } else {
             const idSlug = toIdSlug(c);
             catalogs.push(
-                { type: "movie", id: `netflix_top10_movies_${idSlug}`, name: `Netflix Top 10 Movies (${c})` },
-                { type: "TV Shows", id: `netflix_top10_series_${idSlug}`, name: `Netflix Top 10 TV Shows (${c})` }
+                { type: "movie", id: `netflix_top10_movies_${idSlug}`, name: `Netflix Top 10 (${c})` },
+                { type: "TV Shows", id: `netflix_top10_series_${idSlug}`, name: `Netflix Top 10 (${c})` }
             );
         }
     }
