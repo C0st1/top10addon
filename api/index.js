@@ -276,24 +276,24 @@ function formatMeta(item, finalId, type, rpdbApiKey) {
 
 const toIdSlug = (c) => c.toLowerCase().replace(/[^a-z0-9]+/g, "_");
 
-function buildManifest(country = "Romania", multiCountries = [], includeGlobal = false) {
+function buildManifest(country = "Romania", multiCountries = []) {
     const list = multiCountries.length > 0 ? multiCountries : [country];
     const catalogs = [];
 
     // Improvement: Unmerged catalogs preserving exact user order
     for (const c of list) {
-        const idSlug = toIdSlug(c);
-        catalogs.push(
-            { type: "movie", id: `netflix_top10_movies_${idSlug}`, name: `Netflix Top 10 Movies (${c})` },
-            { type: "series", id: `netflix_top10_series_${idSlug}`, name: `Netflix Top 10 TV Shows (${c})` }
-        );
-    }
-
-    if (includeGlobal) {
-        catalogs.push(
-            { type: "movie", id: "netflix_top10_movies_global", name: "Netflix Top 10 Movies (Global)" },
-            { type: "series", id: "netflix_top10_series_global", name: "Netflix Top 10 TV Shows (Global)" }
-        );
+        if (c.toLowerCase() === "global") {
+            catalogs.push(
+                { type: "movie", id: "netflix_top10_movies_global", name: "Netflix Top 10 Movies (Global)" },
+                { type: "series", id: "netflix_top10_series_global", name: "Netflix Top 10 TV Shows (Global)" }
+            );
+        } else {
+            const idSlug = toIdSlug(c);
+            catalogs.push(
+                { type: "movie", id: `netflix_top10_movies_${idSlug}`, name: `Netflix Top 10 Movies (${c})` },
+                { type: "series", id: `netflix_top10_series_${idSlug}`, name: `Netflix Top 10 TV Shows (${c})` }
+            );
+        }
     }
 
     return {
@@ -331,10 +331,11 @@ async function fetchCatalogFresh(cacheKey, type, catalogId, apiKey, rpdbApiKey, 
     let titles = [];
     let targetCountry = "";
 
-    if (isGlobal) {
+    if (isGlobal || catalogId.endsWith("_global")) {
         titles = await fetchGlobalTitles(categoryType);
     } else {
-        const idSlug = catalogId.replace(`netflix_top10_${type}_`, "");
+        const prefix = catalogId.includes("movies_") ? "netflix_top10_movies_" : "netflix_top10_series_";
+        const idSlug = catalogId.replace(prefix, "");
         targetCountry = multiCountries.find(c => toIdSlug(c) === idSlug) || idSlug;
         titles = await fetchNetflixTitles(categoryType, targetCountry);
     }
@@ -368,8 +369,7 @@ function parseConfig(configStr) {
             tmdbApiKey: config.tmdbApiKey.trim(),
             rpdbApiKey: config.rpdbApiKey?.trim() || null,
             country: mc[0] || "Romania",
-            multiCountries: mc,
-            includeGlobal: config.includeGlobal === true,
+            multiCountries: mc
         };
     } catch { return null; }
 }
@@ -470,10 +470,7 @@ async function buildConfigHTML(countries, latestWeek) {
             <label>RPDB API Key <span class="optional-tag">optional</span></label>
             <input type="text" id="rpdbKey" placeholder="e.g. t1-xxxxxx...">
         </div>
-        <div class="toggle-field">
-            <input type="checkbox" id="includeGlobalChk">
-            <label for="includeGlobalChk">Include Global Top 10 Catalogs</label>
-        </div>
+
         <button class="btn btn-primary" id="generateBtn" onclick="generateLink()">Generate Install Link</button>
         <div id="resultArea">
             <p style="font-size:12px;color:#999;">Manifest URL:</p>
@@ -483,7 +480,7 @@ async function buildConfigHTML(countries, latestWeek) {
     </div>
 </div>
 <script>
-    const availableCountries = ${JSON.stringify(countries)};
+    const availableCountries = ["Global", ...${JSON.stringify(countries)}];
     let selectedCountriesList = [];
     const searchInput = document.getElementById('countrySearch');
     const dropdown = document.getElementById('countryDropdown');
@@ -574,7 +571,7 @@ async function buildConfigHTML(countries, latestWeek) {
     }
 
     function saveState() {
-        try { localStorage.setItem('nf_top10_config', JSON.stringify({ tmdbKey: document.getElementById('tmdbKey').value, rpdbKey: document.getElementById('rpdbKey').value, includeGlobal: document.getElementById('includeGlobalChk').checked, countries: selectedCountriesList })); } catch {}
+        try { localStorage.setItem('nf_top10_config', JSON.stringify({ tmdbKey: document.getElementById('tmdbKey').value, rpdbKey: document.getElementById('rpdbKey').value, countries: selectedCountriesList })); } catch {}
     }
 
     (function restoreState() {
@@ -582,7 +579,6 @@ async function buildConfigHTML(countries, latestWeek) {
             const s = JSON.parse(localStorage.getItem('nf_top10_config') || '{}');
             if (s.tmdbKey) document.getElementById('tmdbKey').value = s.tmdbKey;
             if (s.rpdbKey) document.getElementById('rpdbKey').value = s.rpdbKey;
-            if (s.includeGlobal) document.getElementById('includeGlobalChk').checked = true;
             if (s.countries?.length) s.countries.forEach(addCountry); else addCountry('Romania');
         } catch { addCountry('Romania'); }
     })();
@@ -605,7 +601,6 @@ async function buildConfigHTML(countries, latestWeek) {
         
         let cfg = { tmdbApiKey: tmdbKey, country: selectedCountriesList.join(',') };
         if (rpdbKey) cfg.rpdbApiKey = rpdbKey;
-        if (document.getElementById('includeGlobalChk').checked) cfg.includeGlobal = true;
         
         currentManifestUrl = window.location.origin + '/' + encodeURIComponent(JSON.stringify(cfg)) + '/manifest.json';
         document.getElementById('manifestDisplayUrl').textContent = currentManifestUrl;
@@ -650,9 +645,9 @@ module.exports = async (req, res) => {
 
     if (path.endsWith("/manifest.json")) {
         const configStr = path.replace("/manifest.json", "").replace(/^\//, "");
-        let cc = "Romania", mcs = [], glob = false;
-        try { const cfg = JSON.parse(decodeURIComponent(configStr)); if (cfg.country) { mcs = cfg.country.split(",").map(c=>c.trim()).filter(c=>c); cc = mcs[0]; } glob = !!cfg.includeGlobal; } catch {}
-        return res.status(200).setHeader("Content-Type", "application/json").json(buildManifest(cc, mcs, glob));
+        let cc = "Romania", mcs = [];
+        try { const cfg = JSON.parse(decodeURIComponent(configStr)); if (cfg.country) { mcs = cfg.country.split(",").map(c=>c.trim()).filter(c=>c); cc = mcs[0]; } } catch {}
+        return res.status(200).setHeader("Content-Type", "application/json").json(buildManifest(cc, mcs));
     }
 
     const match = path.match(/^\/(.*?)\/catalog\/(movie|series)\/([^/.]+)(?:\.json)?$/);
