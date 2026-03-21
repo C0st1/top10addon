@@ -531,7 +531,7 @@ async function buildConfigHTML(countries, latestWeek) {
 
         <div class="btn-group">
             <button class="btn btn-primary" id="generateBtn" onclick="generateLink()" style="flex: 2;">Generate Install Link</button>
-            <button class="btn btn-danger" onclick="resetForm()" style="flex: 1;" title="Clear Configuration">Reset Form</button>
+            <button class="btn btn-danger" onclick="resetForm()" style="flex: 1;" title="Clear Configuration">Clear</button>
         </div>
         <div id="resultArea">
             <p style="font-size:12px;color:#999;">Manifest URL:</p>
