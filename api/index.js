@@ -235,7 +235,7 @@ function formatMeta(item, finalId, type, rpdbApiKey) {
     const tmdbP = item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : null;
     return {
         id: finalId,
-        type: type === "tv" ? "TV Shows" : "movie",
+        type: type === "tv" ? "tv_shows" : "movie",
         name: item.title || item.name,
         poster: getRpdbPosterUrl(finalId, rpdbApiKey) || tmdbP,
         background: item.backdrop_path ? `https://image.tmdb.org/t/p/w1280${item.backdrop_path}` : null,
@@ -255,13 +255,13 @@ function buildManifest(country = "Global", multiCountries = []) {
         if (c.toLowerCase() === "global") {
             catalogs.push(
                 { type: "movie", id: "netflix_top10_movies_global", name: "Netflix Top 10 Movies (Global)" },
-                { type: "TV Shows", id: "netflix_top10_series_global", name: "Netflix Top 10 TV Shows (Global)" }
+                { type: "tv_shows", id: "netflix_top10_series_global", name: "Netflix Top 10 TV Shows (Global)" }
             );
         } else {
             const idSlug = toIdSlug(c);
             catalogs.push(
                 { type: "movie", id: `netflix_top10_movies_${idSlug}`, name: `Netflix Top 10 Movies (${c})` },
-                { type: "TV Shows", id: `netflix_top10_series_${idSlug}`, name: `Netflix Top 10 TV Shows (${c})` }
+                { type: "tv_shows", id: `netflix_top10_series_${idSlug}`, name: `Netflix Top 10 TV Shows (${c})` }
             );
         }
     }
@@ -272,7 +272,7 @@ function buildManifest(country = "Global", multiCountries = []) {
         name: "Netflix Top 10",
         description: "Weekly updated Netflix Top 10 rankings per-country with precise Stremio catalogs.",
         logo: "https://img.icons8.com/color/256/netflix.png",
-        types: ["movie", "TV Shows"],
+        types: ["movie", "tv_shows"],
         catalogs,
         resources: ["catalog"],
         behaviorHints: { configurable: true },
@@ -657,7 +657,7 @@ module.exports = async (req, res) => {
         return res.status(200).setHeader("Content-Type", "application/json").json(buildManifest(cc, mcs));
     }
 
-    const match = path.match(/^\/(.*?)\/catalog\/(movie|TV%20Shows)\/([^/.]+)(?:\.json)?$/);
+    const match = path.match(/^\/(.*?)\/catalog\/(movie|tv_shows)\/([^/.]+)(?:\.json)?$/);
     if (match) {
         const config = parseConfig(match[1]);
         if (!config) return res.status(400).json({ error: "Missing/Invalid config" });
