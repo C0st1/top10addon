@@ -494,12 +494,6 @@ async function buildConfigHTML(countries, latestWeek) {
             <div class="toast" id="copyToast">✅ Copied to clipboard!</div>
             <button class="btn btn-secondary" onclick="installDirectly()">▶ Install to Stremio</button>
         </div>
-
-        <div style="margin-top:24px; padding-top:20px; border-top:1px dashed var(--border);">
-            <label style="font-size:11px;font-weight:600;text-transform:uppercase;color:var(--muted);display:block;margin-bottom:6px;">⚡ Keep-Alive Ping (Anti-Sleep)</label>
-            <p class="hint" style="margin-top:0;margin-bottom:8px;">Vercel free tier sleeps after 5 mins of inactivity. To prevent slow loading, add this URL to <a href="https://uptimerobot.com" target="_blank">UptimeRobot</a> as a free 5-minute HTTP ping.</p>
-            <div class="url-box" style="background:#000;"><span class="url-box-text" id="pingUrlDisplay"></span></div>
-        </div>
     </div>
 </div>
 <script>
@@ -610,8 +604,6 @@ async function buildConfigHTML(countries, latestWeek) {
             if (s.rpdbKey) document.getElementById('rpdbKey').value = s.rpdbKey;
             if (s.countries?.length) s.countries.forEach(addCountry); else addCountry('Global');
         } catch { addCountry('Global'); }
-        
-        document.getElementById('pingUrlDisplay').textContent = window.location.origin + '/health';
     })();
 
     async function testTmdbKey() { /* Redacted visual updates for brevity, keeps core API call */
