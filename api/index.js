@@ -180,52 +180,22 @@ async function getAvailableCountries() {
 }
 
 const TITLE_OVERRIDES = { "the race": "tt35052447" };
-const COUNTRY_LANG_MAP = {
-    "Argentina": "es-AR",
-    "Australia": "en-AU",
-    "Austria": "de-AT",
-    "Belgium": "nl-BE",
-    "Brazil": "pt-BR",
-    "Canada": "en-CA",
-    "Chile": "es-CL",
-    "Colombia": "es-CO",
-    "Czech Republic": "cs-CZ",
-    "Denmark": "da-DK",
-    "Finland": "fi-FI",
-    "France": "fr-FR",
-    "Germany": "de-DE",
-    "Greece": "el-GR",
-    "Hong Kong": "zh-HK",
-    "Hungary": "hu-HU",
-    "India": "hi-IN",
-    "Indonesia": "id-ID",
-    "Ireland": "en-IE",
-    "Israel": "he-IL",
-    "Italy": "it-IT",
-    "Japan": "ja-JP",
-    "Malaysia": "ms-MY",
-    "Mexico": "es-MX",
-    "Netherlands": "nl-NL",
-    "New Zealand": "en-NZ",
-    "Norway": "no-NO",
-    "Peru": "es-PE",
-    "Philippines": "tl-PH",
-    "Poland": "pl-PL",
-    "Portugal": "pt-PT",
-    "Romania": "ro-RO",
-    "Singapore": "zh-SG",
-    "Slovakia": "sk-SK",
-    "South Africa": "en-ZA",
-    "South Korea": "ko-KR",
-    "Spain": "es-ES",
-    "Sweden": "sv-SE",
-    "Switzerland": "de-CH",
-    "Taiwan": "zh-TW",
-    "Thailand": "th-TH",
-    "Turkey": "tr-TR",
-    "United Kingdom": "en-GB",
-    "United States": "en-US",
-    "Vietnam": "vi-VN"
+const COUNTRY_DATA = {
+    "Argentina": { lang: "es-AR", reg: "AR" },
+    "Australia": { lang: "en-AU", reg: "AU" },
+    "Brazil": { lang: "pt-BR", reg: "BR" },
+    "Canada": { lang: "en-CA", reg: "CA" },
+    "France": { lang: "fr-FR", reg: "FR" },
+    "Germany": { lang: "de-DE", reg: "DE" },
+    "India": { lang: "hi-IN", reg: "IN" },
+    "Italy": { lang: "it-IT", reg: "IT" },
+    "Japan": { lang: "ja-JP", reg: "JP" },
+    "Mexico": { lang: "es-MX", reg: "MX" },
+    "Romania": { lang: "ro-RO", reg: "RO" },
+    "South Korea": { lang: "ko-KR", reg: "KR" },
+    "Spain": { lang: "es-ES", reg: "ES" },
+    "United Kingdom": { lang: "en-GB", reg: "GB" },
+    "United States": { lang: "en-US", reg: "US" }
 };
 const tmdbMatchCache = new Map();
 const TMDB_MATCH_CACHE_TTL = 6 * 60 * 60 * 1000;
@@ -299,87 +269,80 @@ async function matchTMDB(title, type, apiKey, country = "Global") {
 
     const run = (async () => {
         try {
-            // 1. Aggressive Cleaning: Removes Seasons, Parts, and "Limited Series"
-            const cleanTitle = title
-                .replace(/[:\-]?\s*(?:Season\s+\d+|Limited\s+Series|Part\s+\d+|Volume\s+\d+).*$/gi, "")
-                .trim();
+            // 1. Aggressive cleaning
+            const cleanTitle = title.replace(/[:\-]?\s*(?:Season\s+\d+|Limited\s+Series|Part\s+\d+|Volume\s+\d+).*$/gi, "").trim();
             const cleanTitleLower = cleanTitle.toLowerCase();
             
-            // 2. Manual Overrides
+            // 2. Override Check
             if (TITLE_OVERRIDES[cleanTitleLower]) {
                 const res = await fetchWithTimeout(`https://api.themoviedb.org/3/find/${TITLE_OVERRIDES[cleanTitleLower]}?api_key=${apiKey}&external_source=imdb_id`);
                 if (res.ok) {
                     const data = await res.json();
                     const matched = type === "tv" ? data.tv_results?.[0] : data.movie_results?.[0];
-                    if (matched) {
-                        const meta = formatMeta(matched, TITLE_OVERRIDES[cleanTitleLower], type);
-                        tmdbMatchCache.set(cacheKey, { value: meta, timestamp: Date.now() });
-                        return meta;
-                    }
+                    if (matched) return formatMeta(matched, TITLE_OVERRIDES[cleanTitleLower], type);
                 }
             }
 
-            const langCode = COUNTRY_LANG_MAP[country] || "en-US";
+            const countryInfo = COUNTRY_DATA[country] || { lang: "en-US", reg: "US" };
+            const currentYear = new Date().getFullYear();
 
-            // Search Helper
-            const search = async (lang) => {
-                const url = `https://api.themoviedb.org/3/search/${type}?api_key=${apiKey}&query=${encodeURIComponent(cleanTitle)}&language=${lang}&page=1`;
-                const r = await fetchWithTimeout(url);
-                return r.ok ? (await r.json()).results : [];
-            };
+            // 3. Search with Region & Language
+            // Using &region helps TMDB understand WHICH "Top 10" we are looking for
+            const url = `https://api.themoviedb.org/3/search/${type}?api_key=${apiKey}&query=${encodeURIComponent(cleanTitle)}&language=${countryInfo.lang}&region=${countryInfo.reg}&include_adult=false`;
+            
+            const sRes = await fetchWithTimeout(url);
+            if (!sRes.ok) return null;
+            const sData = await sRes.json();
+            let results = sData.results || [];
 
-            // Step A: Search in Local Language
-            let results = await search(langCode);
+            if (results.length > 0) {
+                // 4. Advanced Scoring Logic
+                const scoredResults = results.map(item => {
+                    let score = 0;
+                    const itemTitle = (type === "tv" ? item.name : item.title) || "";
+                    const itemOrigTitle = (type === "tv" ? item.original_name : item.original_title) || "";
+                    const releaseDate = item.release_date || item.first_air_date || "1900-01-01";
+                    const year = parseInt(releaseDate.split("-")[0]);
 
-            // Step B: Fallback to en-US if no results
-            if ((!results || results.length === 0) && langCode !== "en-US") {
-                results = await search("en-US");
-            }
+                    // Exact Title Match (Highest Priority)
+                    if (itemTitle.toLowerCase() === cleanTitleLower || itemOrigTitle.toLowerCase() === cleanTitleLower) score += 100;
+                    
+                    // Recency Bias (Netflix Top 10 is almost always recent)
+                    if (year >= currentYear - 1) score += 50;
+                    else if (year >= currentYear - 3) score += 20;
+                    
+                    // Popularity Tie-breaker
+                    score += (item.popularity / 100); 
 
-            if (results && results.length > 0) {
-                // Filter for exact title matches to avoid "similar" titles
-                const exact = results.filter(i => {
-                    const name = (type === "tv" ? i.name : i.title)?.toLowerCase();
-                    const orig = (type === "tv" ? i.original_name : i.original_title)?.toLowerCase();
-                    return name === cleanTitleLower || orig === cleanTitleLower;
+                    return { ...item, internalScore: score };
                 });
 
-                const candidates = exact.length > 0 ? exact : results.slice(0, 3);
-                
-                // Step C: Prioritize the most RECENT release (Netflix Top 10 is almost always new)
-                const best = candidates.sort((a,b) => {
-                    const dateA = new Date(a.release_date || a.first_air_date || "1900-01-01");
-                    const dateB = new Date(b.release_date || b.first_air_date || "1900-01-01");
-                    return dateB - dateA;
-                })[0];
-                
-                // Get IMDB ID
+                // Sort by our custom score
+                const best = scoredResults.sort((a, b) => b.internalScore - a.internalScore)[0];
+
+                // 5. Fetch IMDB ID (Required for Stremio)
                 let finalId = `tmdb:${best.id}`;
-                const cKey = getImdbCacheKey(type, best.id);
-                if (imdbCache.has(cKey)) finalId = imdbCache.get(cKey);
-                else {
-                    try {
-                        const extRes = await fetchWithTimeout(`https://api.themoviedb.org/3/${type}/${best.id}?api_key=${apiKey}&append_to_response=external_ids`);
-                        if (extRes.ok) {
-                            const extData = await extRes.json();
-                            const imdbId = extData.external_ids?.imdb_id || extData.imdb_id;
-                            if (imdbId) { finalId = imdbId; imdbCache.set(cKey, imdbId); }
-                        }
-                    } catch {}
-                }
-                
+                try {
+                    const extRes = await fetchWithTimeout(`https://api.themoviedb.org/3/${type}/${best.id}?api_key=${apiKey}&append_to_response=external_ids`);
+                    if (extRes.ok) {
+                        const extData = await extRes.json();
+                        finalId = extData.external_ids?.imdb_id || extData.imdb_id || finalId;
+                    }
+                } catch {}
+
                 const meta = formatMeta(best, finalId, type);
                 tmdbMatchCache.set(cacheKey, { value: meta, timestamp: Date.now() });
                 return meta;
             }
             
-            tmdbMatchCache.set(cacheKey, { value: null, timestamp: Date.now() });
             return null;
-        } catch { return null; }
+        } catch (e) {
+            return null;
+        }
     })();
 
     tmdbMatchInFlight.set(cacheKey, run);
-    try { return await run; } finally { tmdbMatchInFlight.delete(cacheKey); }
+    return run;
 }
 
 function formatMeta(item, finalId, type) {
@@ -471,8 +434,141 @@ async function fetchCatalogFresh(cacheKey, type, catalogId, apiKey, multiCountri
 
     if (titles.length === 0) return [];
 
-    // Passing 'targetCountry' allows the search to use the correct language map
+    Gemini a spus
+
+If the localized search and recency tie-breaker still aren't hitting the mark, the issue usually stems from TMDB's search algorithm prioritizing global popularity over specific regional relevance, or Netflix using a "local" title that doesn't match the "original" title in TMDB's database.
+
+Here are three advanced strategies to fix this, followed by the updated code.
+The "Deep Match" Strategy
+
+    Region Parameter: Add the region parameter (ISO-3166-1) to the TMDB API call. This tells TMDB to prioritize results released or trending in that specific country.
+
+    Year Windowing: Since Netflix Top 10 lists are almost exclusively content from the last 1–3 years (or legendary classics), we can implement a "Year Bias" that heavily penalizes results older than a certain threshold unless they are an exact string match.
+
+    Popularity Tie-Breaker: If two titles have the same name and similar dates, the one with higher TMDB popularity is usually the Netflix hit.
+
+Step 1: Update the Mapping (Language + Region)
+
+Replace your previous map with this COUNTRY_DATA object. It now includes the Region Code, which is crucial for TMDB's search ranking.
+JavaScript
+
+const COUNTRY_DATA = {
+    "Argentina": { lang: "es-AR", reg: "AR" },
+    "Australia": { lang: "en-AU", reg: "AU" },
+    "Brazil": { lang: "pt-BR", reg: "BR" },
+    "Canada": { lang: "en-CA", reg: "CA" },
+    "France": { lang: "fr-FR", reg: "FR" },
+    "Germany": { lang: "de-DE", reg: "DE" },
+    "India": { lang: "hi-IN", reg: "IN" },
+    "Italy": { lang: "it-IT", reg: "IT" },
+    "Japan": { lang: "ja-JP", reg: "JP" },
+    "Mexico": { lang: "es-MX", reg: "MX" },
+    "Romania": { lang: "ro-RO", reg: "RO" },
+    "South Korea": { lang: "ko-KR", reg: "KR" },
+    "Spain": { lang: "es-ES", reg: "ES" },
+    "United Kingdom": { lang: "en-GB", reg: "GB" },
+    "United States": { lang: "en-US", reg: "US" }
+};
+
+Step 2: Implement the Advanced matchTMDB
+
+Replace your existing matchTMDB in api/index.js. This version includes the region parameter and a smarter scoring system.
+JavaScript
+
+async function matchTMDB(title, type, apiKey, country = "Global") {
+    if (!apiKey) return null;
+    const cacheKey = getTmdbMatchCacheKey(title, type);
+    const cached = getCachedTmdbMatch(cacheKey);
+    if (cached !== undefined) return cached;
+    if (tmdbMatchInFlight.has(cacheKey)) return tmdbMatchInFlight.get(cacheKey);
+
+    const run = (async () => {
+        try {
+            // 1. Aggressive cleaning
+            const cleanTitle = title.replace(/[:\-]?\s*(?:Season\s+\d+|Limited\s+Series|Part\s+\d+|Volume\s+\d+).*$/gi, "").trim();
+            const cleanTitleLower = cleanTitle.toLowerCase();
+            
+            // 2. Override Check
+            if (TITLE_OVERRIDES[cleanTitleLower]) {
+                const res = await fetchWithTimeout(`https://api.themoviedb.org/3/find/${TITLE_OVERRIDES[cleanTitleLower]}?api_key=${apiKey}&external_source=imdb_id`);
+                if (res.ok) {
+                    const data = await res.json();
+                    const matched = type === "tv" ? data.tv_results?.[0] : data.movie_results?.[0];
+                    if (matched) return formatMeta(matched, TITLE_OVERRIDES[cleanTitleLower], type);
+                }
+            }
+
+            const countryInfo = COUNTRY_DATA[country] || { lang: "en-US", reg: "US" };
+            const currentYear = new Date().getFullYear();
+
+            // 3. Search with Region & Language
+            // Using &region helps TMDB understand WHICH "Top 10" we are looking for
+            const url = `https://api.themoviedb.org/3/search/${type}?api_key=${apiKey}&query=${encodeURIComponent(cleanTitle)}&language=${countryInfo.lang}&region=${countryInfo.reg}&include_adult=false`;
+            
+            const sRes = await fetchWithTimeout(url);
+            if (!sRes.ok) return null;
+            const sData = await sRes.json();
+            let results = sData.results || [];
+
+            if (results.length > 0) {
+                // 4. Advanced Scoring Logic
+                const scoredResults = results.map(item => {
+                    let score = 0;
+                    const itemTitle = (type === "tv" ? item.name : item.title) || "";
+                    const itemOrigTitle = (type === "tv" ? item.original_name : item.original_title) || "";
+                    const releaseDate = item.release_date || item.first_air_date || "1900-01-01";
+                    const year = parseInt(releaseDate.split("-")[0]);
+
+                    // Exact Title Match (Highest Priority)
+                    if (itemTitle.toLowerCase() === cleanTitleLower || itemOrigTitle.toLowerCase() === cleanTitleLower) score += 100;
+                    
+                    // Recency Bias (Netflix Top 10 is almost always recent)
+                    if (year >= currentYear - 1) score += 50;
+                    else if (year >= currentYear - 3) score += 20;
+                    
+                    // Popularity Tie-breaker
+                    score += (item.popularity / 100); 
+
+                    return { ...item, internalScore: score };
+                });
+
+                // Sort by our custom score
+                const best = scoredResults.sort((a, b) => b.internalScore - a.internalScore)[0];
+
+                // 5. Fetch IMDB ID (Required for Stremio)
+                let finalId = `tmdb:${best.id}`;
+                try {
+                    const extRes = await fetchWithTimeout(`https://api.themoviedb.org/3/${type}/${best.id}?api_key=${apiKey}&append_to_response=external_ids`);
+                    if (extRes.ok) {
+                        const extData = await extRes.json();
+                        finalId = extData.external_ids?.imdb_id || extData.imdb_id || finalId;
+                    }
+                } catch {}
+
+                const meta = formatMeta(best, finalId, type);
+                tmdbMatchCache.set(cacheKey, { value: meta, timestamp: Date.now() });
+                return meta;
+            }
+            
+            return null;
+        } catch (e) {
+            return null;
+        }
+    })();
+
+    tmdbMatchInFlight.set(cacheKey, run);
+    return run;
+}
+
+Step 3: Verify the Fetcher Call
+
+Make sure fetchCatalogFresh (around line 320) is passing the targetCountry correctly. If this is missing, the country parameter defaults to "Global" and the region logic fails.
+JavaScript
+
+// Ensure this line in fetchCatalogFresh passes targetCountry:
 const metas = (await pMap(titles, (title) => matchTMDB(title, tmdbType, apiKey, targetCountry), 5))
+    .filter(v => !!v);
+
         .filter(v => v !== null && v !== undefined);
     
     if (metas.length > 0) setCache(cacheKey, metas);
