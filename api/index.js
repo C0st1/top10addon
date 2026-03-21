@@ -730,8 +730,8 @@ async function buildConfigHTML(countries, latestWeek) {
     
     function togglePwd(id, btn) {
         const input = document.getElementById(id);
-        if (input.type === 'password') { input.type = 'text'; btn.textContent = '🙈'; }
-        else { input.type = 'password'; btn.textContent = '👁️'; }
+        if (input.type === 'password') { input.type = 'text'; btn.textContent = 'HIDE'; }
+        else { input.type = 'password'; btn.textContent = 'SHOW'; }
     }
 
     function copyLink() {
