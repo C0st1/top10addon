@@ -259,7 +259,11 @@ async function matchTMDB(title, type, apiKey, rpdbApiKey, categoryType, country)
     return null;
 }
 
-function appendTrend(meta, trend) { meta.description = `${trend.indicator} ${trend.detail}\n\n${meta.description || ""}`; }
+function appendTrend(meta, trend) {
+    const orig = meta.releaseInfo || "";
+    meta.description = `${trend.indicator} ${trend.detail}\n\n${meta.description || ""}`;
+    meta.releaseInfo = `${trend.indicator} ${trend.detail.replace(/ this week| spots?/, "")}${orig ? " • " + orig : ""}`;
+}
 
 function formatMeta(item, finalId, type, rpdbApiKey) {
     const tmdbP = item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : null;
