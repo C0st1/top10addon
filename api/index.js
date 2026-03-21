@@ -138,7 +138,7 @@ async function throttledMap(items, fn, concurrency = 3) {
     return results;
 }
 
-async function fetchNetflixTitles(categoryType, country = "Romania") {
+async function fetchNetflixTitles(categoryType, country = "Global") {
     try {
         const parsed = await getParsedTSV();
         if (!parsed.data[country] || !parsed.data[country][categoryType]) return [];
@@ -276,7 +276,7 @@ function formatMeta(item, finalId, type, rpdbApiKey) {
 
 const toIdSlug = (c) => c.toLowerCase().replace(/[^a-z0-9]+/g, "_");
 
-function buildManifest(country = "Romania", multiCountries = []) {
+function buildManifest(country = "Global", multiCountries = []) {
     const list = multiCountries.length > 0 ? multiCountries : [country];
     const catalogs = [];
 
@@ -364,11 +364,11 @@ function parseConfig(configStr) {
     try {
         const config = JSON.parse(decodeURIComponent(configStr));
         if (!config?.tmdbApiKey?.trim()) return null;
-        const mc = (config.country || "Romania").split(",").map(c => c.trim()).filter(c => c);
+        const mc = (config.country || "Global").split(",").map(c => c.trim()).filter(c => c);
         return {
             tmdbApiKey: config.tmdbApiKey.trim(),
             rpdbApiKey: config.rpdbApiKey?.trim() || null,
-            country: mc[0] || "Romania",
+            country: mc[0] || "Global",
             multiCountries: mc
         };
     } catch { return null; }
@@ -600,8 +600,8 @@ async function buildConfigHTML(countries, latestWeek) {
             const s = JSON.parse(localStorage.getItem('nf_top10_config') || '{}');
             if (s.tmdbKey) document.getElementById('tmdbKey').value = s.tmdbKey;
             if (s.rpdbKey) document.getElementById('rpdbKey').value = s.rpdbKey;
-            if (s.countries?.length) s.countries.forEach(addCountry); else addCountry('Romania');
-        } catch { addCountry('Romania'); }
+            if (s.countries?.length) s.countries.forEach(addCountry); else addCountry('Global');
+        } catch { addCountry('Global'); }
     })();
 
     async function testTmdbKey() { /* Redacted visual updates for brevity, keeps core API call */
@@ -680,7 +680,7 @@ module.exports = async (req, res) => {
 
     if (path.endsWith("/manifest.json")) {
         const configStr = path.replace("/manifest.json", "").replace(/^\//, "");
-        let cc = "Romania", mcs = [];
+        let cc = "Global", mcs = [];
         try { const cfg = JSON.parse(decodeURIComponent(configStr)); if (cfg.country) { mcs = cfg.country.split(",").map(c=>c.trim()).filter(c=>c); cc = mcs[0]; } } catch {}
         return res.status(200).setHeader("Content-Type", "application/json").json(buildManifest(cc, mcs));
     }
