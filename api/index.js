@@ -425,8 +425,8 @@ async function buildConfigHTML(countries, latestWeek) {
         .field-row { display: flex; flex-direction: column; gap: 0; }
         @media (min-width: 800px) {
             .card { max-width: 900px; display: flex; flex-direction: row; }
-            .card-header { width: 360px; border-bottom: none; border-right: 1px solid var(--border); padding: 48px; display: flex; flex-direction: column; justify-content: center; }
-            .card-body { flex: 1; padding: 48px; }
+            .card-header { width: 360px; flex-shrink: 0; border-bottom: none; border-right: 1px solid var(--border); padding: 48px; display: flex; flex-direction: column; justify-content: center; }
+            .card-body { flex: 1; min-width: 0; padding: 48px; }
             .field-row { flex-direction: row; gap: 20px; margin-bottom: 20px; }
             .field-row .field { flex: 1; margin-bottom: 0; }
         }
