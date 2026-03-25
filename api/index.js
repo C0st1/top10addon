@@ -521,7 +521,6 @@ function parseConfig(configStr) {
 }
 
 async function buildConfigHTML(countries, latestWeek) {
-    // Note: The HTML output remains completely unchanged to satisfy constraints.
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -542,7 +541,7 @@ async function buildConfigHTML(countries, latestWeek) {
         .logo-row { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
         .logo-n { font-family: 'Bebas Neue', sans-serif; font-size: 38px; color: var(--red); line-height: 1; letter-spacing: -1px; }
         .logo-badge { background: var(--red); color: #fff; font-size: 10px; font-weight: 600; padding: 4px 8px; border-radius: 4px; text-transform: uppercase; }
-        .week-badge { display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; padding: 4px 10px; background: rgba(229,9,20,0.1); border: 1px solid rgba(229,9,20,0.2); border-radius: 6px; font-size: 11px; color: #e57373; }
+        .week-badge { display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; padding: 4px 10px; background: rgba(229,9,20,0.1); border: 1px solid rgba(229,9,20,0.2); border-radius: 6px; font-size: 11px; color: #e57373; transition: 0.3s; }
         .card-body { padding: 28px 36px 36px; }
         .field { margin-bottom: 20px; position: relative; }
         .field label { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
@@ -639,7 +638,7 @@ async function buildConfigHTML(countries, latestWeek) {
         <div class="logo-row"><span class="logo-n">N</span><span class="logo-badge">Stremio Addon</span></div>
         <h1>Netflix Top 10</h1>
         <p>Dynamic unmerged catalogs per country with correct Stremio metadata matching.</p>
-        <div class="week-badge"><span>Week of <strong>${latestWeek}</strong></span></div>
+        <div class="week-badge" id="weekBadge"><span>Week of <strong>${latestWeek}</strong></span></div>
     </div>
     <div class="card-body">
         <div class="field">
@@ -722,10 +721,29 @@ async function buildConfigHTML(countries, latestWeek) {
 </div>
 <script>
     const availableCountries = ["Global", ...${JSON.stringify(countries)}];
+    const serverLatestWeek = "${latestWeek}";
     let selectedCountriesList = [];
     const searchInput = document.getElementById('countrySearch');
     const dropdown = document.getElementById('countryDropdown');
     const selectedContainer = document.getElementById('selectedCountries');
+
+    function updateWeekBadge() {
+        const badge = document.getElementById('weekBadge');
+        if (!badge) return;
+        
+        // Dynamically show live status if Romania is selected
+        if (selectedCountriesList.some(c => c.toLowerCase() === 'romania')) {
+            badge.innerHTML = '<span>Status: <strong>Live Data (Today)</strong></span>';
+            badge.style.color = '#2ecc71';
+            badge.style.background = 'rgba(46, 204, 113, 0.1)';
+            badge.style.borderColor = 'rgba(46, 204, 113, 0.3)';
+        } else {
+            badge.innerHTML = \`<span>Week of <strong>\${serverLatestWeek}</strong></span>\`;
+            badge.style.color = '#e57373';
+            badge.style.background = 'rgba(229,9,20,0.1)';
+            badge.style.borderColor = 'rgba(229,9,20,0.2)';
+        }
+    }
 
     function renderDropdown(filter="") {
         dropdown.innerHTML = '';
@@ -814,6 +832,7 @@ async function buildConfigHTML(countries, latestWeek) {
             
             selectedContainer.appendChild(pill);
         });
+        updateWeekBadge(); // Trigger badge update on render
     }
 
     function saveState() {
@@ -849,7 +868,7 @@ async function buildConfigHTML(countries, latestWeek) {
         } catch { addCountry('Global'); }
     })();
 
-    async function testTmdbKey() { /* Redacted visual updates for brevity, keeps core API call */
+    async function testTmdbKey() {
         const key = document.getElementById('tmdbKey').value.trim();
         const stat = document.getElementById('keyStatus');
         if (!key) { stat.textContent = '❌ Key is empty'; stat.className = 'key-status error'; return; }
