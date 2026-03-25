@@ -1,7 +1,7 @@
 // ============================================================
-// Netflix Top 10 — Stremio Addon (Vercel / Node.js) — v3.3
+// Netflix Top 10 — Stremio Addon (Vercel / Node.js) — v3.4
 // Features: Drag-and-drop sortable multiselect, unmerged catalogs
-// Now powered entirely by FlixPatrol live scraping
+// Now powered entirely by FlixPatrol live scraping with Year/Popularity matching
 // ============================================================
 
 const cheerio = require('cheerio');
@@ -42,10 +42,6 @@ async function fetchWithTimeout(url, opts = {}, ms = 8000) {
     }
 }
 
-function getImdbCacheKey(type, tmdbId) {
-    return `${type}_${tmdbId}`;
-}
-
 // --- SUPPORTED COUNTRIES (FlixPatrol) ---
 const FLIXPATROL_COUNTRIES = [
     "Global", // Replaces "Worldwide" for UI consistency
@@ -76,7 +72,7 @@ function getFlixPatrolSlug(country) {
     return lower.replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
 }
 
-// --- FLIXPATROL SCRAPER (Multi-Region) ---
+// --- FLIXPATROL SCRAPER (Multi-Region with Year Extraction) ---
 async function fetchFlixPatrolTitles(categoryType, country = "Global") {
     const slug = getFlixPatrolSlug(country);
     const cacheKey = `flixpatrol_${slug}_${categoryType}`;
@@ -94,35 +90,41 @@ async function fetchFlixPatrolTitles(categoryType, country = "Global") {
         const titles = [];
         const targetHeader = categoryType === "Films" ? "TOP 10 Movies" : "TOP 10 TV Shows";
         
-        // Find elements containing the target header text
         const headers = $(`*:contains("${targetHeader}")`).filter(function() {
             return $(this).children().length === 0;
         });
 
         if (headers.length > 0) {
-            // Traverse up to find the closest wrapper/table for this specific section
             let container = headers.first().closest('table');
             if (container.length === 0) container = headers.first().closest('div').nextAll('table').first();
             if (container.length === 0) container = headers.first().closest('.card, .table-wrapper, div[class*="flex"], div[class*="grid"]');
 
             container.find('a[href*="/title/"]').each((i, a) => {
                 const title = $(a).text().trim();
-                if (title && !titles.includes(title) && titles.length < 10) {
-                    titles.push(title);
+                const href = $(a).attr('href') || '';
+                // Try to extract a year from the end of the slug (e.g. /title/war-machine-2017/)
+                const yearMatch = href.match(/-(\d{4})\/?$/);
+                const year = yearMatch ? yearMatch[1] : null;
+
+                if (title && !titles.some(t => t.title === title) && titles.length < 10) {
+                    titles.push({ title, year });
                 }
             });
         }
 
-        // Fallback: If layout changes, just grab all title links sequentially
+        // Fallback
         if (titles.length === 0) {
             const allTitles = [];
             $('a[href*="/title/"]').each((i, a) => {
                 const title = $(a).text().trim();
-                if (title && !allTitles.includes(title)) {
-                    allTitles.push(title);
+                const href = $(a).attr('href') || '';
+                const yearMatch = href.match(/-(\d{4})\/?$/);
+                const year = yearMatch ? yearMatch[1] : null;
+
+                if (title && !allTitles.some(t => t.title === title)) {
+                    allTitles.push({ title, year });
                 }
             });
-            // Movies usually appear first, TV Shows second in the layout
             if (categoryType === "Films") {
                 titles.push(...allTitles.slice(0, 10));
             } else {
@@ -141,13 +143,19 @@ async function fetchFlixPatrolTitles(categoryType, country = "Global") {
 }
 
 // --- TMDB METADATA MATCHER ---
-const TITLE_OVERRIDES = {};
+const TITLE_OVERRIDES = { "the race": "tt35052447" };
 const tmdbMatchCache = new Map();
 const TMDB_MATCH_CACHE_TTL = 6 * 60 * 60 * 1000;
 const tmdbMatchInFlight = new Map();
 
-function getTmdbMatchCacheKey(title, type) {
-    return `${type}|${title.toLowerCase()}`;
+function getTmdbMatchCacheKey(item, type) {
+    const title = typeof item === 'string' ? item : item.title;
+    const year = typeof item === 'object' && item.year ? `_${item.year}` : '';
+    return `${type}|${title.toLowerCase()}${year}`;
+}
+
+function getImdbCacheKey(type, tmdbId) {
+    return `${type}_${tmdbId}`;
 }
 
 function getCachedTmdbMatch(cacheKey) {
@@ -179,9 +187,12 @@ async function pMap(items, fn, concurrency = 5) {
     return Promise.all(results);
 }
 
-async function matchTMDB(title, type, apiKey) {
+async function matchTMDB(item, type, apiKey) {
     if (!apiKey) return null;
-    const cacheKey = getTmdbMatchCacheKey(title, type);
+    const title = typeof item === 'string' ? item : item.title;
+    const year = typeof item === 'object' ? item.year : null;
+
+    const cacheKey = getTmdbMatchCacheKey(item, type);
     const cached = getCachedTmdbMatch(cacheKey);
     if (cached !== undefined) return cached;
     if (tmdbMatchInFlight.has(cacheKey)) return tmdbMatchInFlight.get(cacheKey);
@@ -205,7 +216,13 @@ async function matchTMDB(title, type, apiKey) {
             }
         }
 
-        const sRes = await fetchWithTimeout(`https://api.themoviedb.org/3/search/${type}?api_key=${apiKey}&query=${encodeURIComponent(cleanTitle)}&language=en-US&page=1`);
+        // Apply year to search if FlixPatrol provided one
+        let searchUrl = `https://api.themoviedb.org/3/search/${type}?api_key=${apiKey}&query=${encodeURIComponent(cleanTitle)}&language=en-US&page=1`;
+        if (year) {
+            searchUrl += type === "tv" ? `&first_air_date_year=${year}` : `&primary_release_year=${year}`;
+        }
+
+        const sRes = await fetchWithTimeout(searchUrl);
         if (!sRes.ok) throw new Error("TMDB Search Failed");
         const sData = await sRes.json();
         
@@ -216,7 +233,10 @@ async function matchTMDB(title, type, apiKey) {
                 const origT = (type === "tv" ? i.original_name : i.original_title)?.toLowerCase();
                 return itemT === cleanTitleLower || origT === cleanTitleLower;
             });
-            const best = exact.length > 0 ? exact.sort((a,b) => new Date(b.release_date||b.first_air_date||"1900-01-01") - new Date(a.release_date||a.first_air_date||"1900-01-01"))[0] : candidates[0];
+            
+            // TMDB sorts by popularity by default.
+            // The first exact match is the most popular one globally.
+            const best = exact.length > 0 ? exact[0] : candidates[0];
             
             let finalId = `tmdb:${best.id}`;
             const cKey = getImdbCacheKey(type, best.id);
@@ -273,7 +293,6 @@ function buildManifest(country = "Global", multiCountries = [], movieType = "mov
     const list = multiCountries.length > 0 ? multiCountries : [country];
     const catalogs = [];
 
-    // Improvement: Unmerged catalogs preserving exact user order
     for (const c of list) {
         if (c.toLowerCase() === "global") {
             catalogs.push(
@@ -290,8 +309,8 @@ function buildManifest(country = "Global", multiCountries = [], movieType = "mov
     }
 
     return {
-        id: "org.stremio.netflixtop10", // Stay static to prevent duplicate addons when config changes
-        version: "3.3.0",
+        id: "org.stremio.netflixtop10", 
+        version: "3.4.0",
         name: "Netflix Top 10",
         description: "Weekly updated Netflix Top 10 rankings per-country with precise Stremio catalogs.",
         logo: "https://img.icons8.com/color/256/netflix.png",
@@ -336,12 +355,11 @@ async function fetchCatalogFresh(cacheKey, type, catalogId, apiKey, multiCountri
         targetCountry = multiCountries.find(c => toIdSlug(c) === idSlug) || idSlug;
     }
 
-    // --- All countries route through FlixPatrol Scraper now ---
-    const titles = await fetchFlixPatrolTitles(categoryType, targetCountry);
+    const items = await fetchFlixPatrolTitles(categoryType, targetCountry);
 
-    if (titles.length === 0) return [];
+    if (items.length === 0) return [];
 
-    const metas = (await pMap(titles, (title) => matchTMDB(title, tmdbType, apiKey), 5))
+    const metas = (await pMap(items, (item) => matchTMDB(item, tmdbType, apiKey), 5))
         .filter(v => v !== null && v !== undefined);
     
     if (metas.length > 0) setCache(cacheKey, metas);
