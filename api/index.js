@@ -8,7 +8,7 @@ const cheerio = require('cheerio');
 
 // --- GENERIC CACHE WITH TTL + STALE-WHILE-REVALIDATE ---
 const cache = new Map();
-const CACHE_TTL = 6 * 60 * 60 * 1000;
+const CACHE_TTL = 1 * 60 * 60 * 1000;
 
 function getCached(key) {
     const entry = cache.get(key);
@@ -852,7 +852,7 @@ module.exports = async (req, res) => {
             if (cfg.movieType) mType = cfg.movieType;
             if (cfg.seriesType) sType = cfg.seriesType;
         } catch {}
-        res.setHeader("Cache-Control", "public, max-age=14400, stale-while-revalidate=43200");
+        res.setHeader("Cache-Control", "public, max-age=3600, stale-while-revalidate=7200");
         return res.status(200).setHeader("Content-Type", "application/json").json(buildManifest(cc, mcs, mType, sType));
     }
 
@@ -862,7 +862,7 @@ module.exports = async (req, res) => {
         if (!config) return res.status(400).json({ error: "Missing/Invalid config" });
         const catalogType = match[3].includes("movies_") ? "movie" : "series";
         const metas = await buildCatalog(catalogType, match[3], config.tmdbApiKey, config.rpdbApiKey, config.country, config.multiCountries);
-        res.setHeader("Cache-Control", "public, max-age=14400, stale-while-revalidate=43200");
+        res.setHeader("Cache-Control", "public, max-age=3600, stale-while-revalidate=7200");
         return res.status(200).setHeader("Content-Type", "application/json").json({ metas });
     }
 
