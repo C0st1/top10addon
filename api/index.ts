@@ -359,5 +359,4 @@ export default async function handler(
     return res.status(404).send('Not Found');
 }
 
-// Allow both ESM default export and CommonJS module.exports
-module.exports = handler;
+

@@ -1,12 +1,5 @@
-// Type declaration for template.js (kept as CommonJS)
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-declare const _template: {
-    buildConfigHTML(countries: readonly string[]): string;
-};
-export default _template;
-export { _template as __template };
+// Type declaration for template.js (ESM module)
 
-// Also provide ambient module declaration for direct imports
 export {};
 
 declare module '../lib/template.js' {

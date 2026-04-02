@@ -49,7 +49,7 @@ export class FlixPatrolProvider implements ScraperProvider {
             }
 
             const html = await res.text();
-            const titles = this.parseTitlesFromHtml(html, categoryType, platform, country);
+            const titles = await this.parseTitlesFromHtml(html, categoryType, platform, country);
 
             if (titles.length > 0) {
                 this.cache.set(cacheKey, titles);
@@ -82,10 +82,10 @@ export class FlixPatrolProvider implements ScraperProvider {
      * Strategy 1: Find category header and extract from nearest container.
      * Strategy 2: Fallback — collect all title links from the page.
      */
-    private parseTitlesFromHtml(html: string, categoryType: string, platform: string, country: string): ScrapedTitle[] {
-        // Dynamic import cheerio (it's a CommonJS module)
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const cheerio = require('cheerio');
+    private async parseTitlesFromHtml(html: string, categoryType: string, platform: string, country: string): Promise<ScrapedTitle[]> {
+        // Dynamic import cheerio (it's a CommonJS module, use createRequire-compatible import)
+        const cheerioModule = await import('cheerio');
+        const cheerio = cheerioModule.default || cheerioModule;
         const $ = cheerio.load(html);
         const titles: ScrapedTitle[] = [];
         const targetHeader = categoryType === 'Films' ? 'TOP 10 Movies' : 'TOP 10 TV Shows';
