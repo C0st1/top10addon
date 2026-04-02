@@ -1,10 +1,17 @@
-# Netflix Top 10 — Stremio Addon v3.7.0
+# Netflix Top 10 — Stremio Addon v3.7.1
 
 A fast, reliable **Stremio addon** that delivers real-time **Netflix Top 10 rankings** across 90+ countries.
 
 Powered by live data scraping from FlixPatrol and enhanced with accurate metadata matching via TMDB, this addon brings up-to-date global and regional trends directly into your Stremio experience.
 
 ---
+
+## What's New in v3.7.1
+
+### Bug Fixes
+
+- **FlixPatrol Scraper Fix** — Updated to handle FlixPatrol's new HTML structure (section IDs `#toc-netflix-movies` and `#toc-netflix-tv-shows`)
+- **Improved Scraping Reliability** — Added multiple fallback strategies for different page layouts
 
 ## What's New in v3.7.0
 
