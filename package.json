@@ -1,6 +1,6 @@
 {
   "name": "netflix-top-10-stremio",
-  "version": "3.7.1",
+  "version": "3.7.2",
   "description": "Live Netflix Top 10 rankings per-country for Stremio",
   "main": "api/index.js",
   "scripts": {
