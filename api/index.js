@@ -1,15 +1,19 @@
 // ============================================================
-// Vercel / Node.js Server — Netflix Top 10 Stremio Addon v3.7.2
+// Vercel / Node.js Server — Netflix Top 10 Stremio Addon v3.7.3
 // ARCH-01 FIX: Thin routing layer; logic in lib/ modules
 // SEC-02 FIX: Exact hostname comparison for CORS origin validation
 // SEC-03 FIX: Rate limiting on all token-based routes
 // SEC-04 FIX: Restrict CORS on mutation endpoints
 // SEC-06 FIX: Rate limiting on all routes
 // SEC-07 FIX: Host header validation; no reflected host in error responses
+// SEC-08 FIX: Nonce-based CSP for HTML pages (no unsafe-inline)
 // SEC-09 FIX: Request body size & depth validation
 // SEC-09b FIX: Token hash logged instead of prefix (SEC-09)
 // SEC-10 FIX: Security headers (CSP, HSTS, X-Frame-Options, etc.)
 // SEC-13 FIX: Input sanitization on type overrides
+// SEC-14 FIX: Error messages generalized to prevent info leakage
+// SEC-15 FIX: Monitoring endpoints require METRICS_API_KEY auth
+// SEC-16 FIX: Rate limiter uses rightmost untrusted IP from x-forwarded-for
 // LOG-01 FIX: Circular reference protection in getJsonDepth()
 // LOG-02 FIX: Invalid host returns clean 400 without reflected URL
 // PERF-04 FIX: All require() calls at module top level
@@ -28,12 +32,15 @@ const { buildManifest, buildCatalog } = require('../lib/manifest');
 const { validateTmdbKey } = require('../lib/tmdb');
 const { saveConfig, getConfig, parseConfig, normalizeConfig } = require('../lib/config-store');
 const { RateLimiter, isValidApiKeyFormat, sanitizeTypeString, generateToken: generateRequestId } = require('../lib/utils');
-const { VERSION, RATE_LIMITS, SECURITY, ALLOWED_CATALOG_TYPES, HEALTH_CHECK } = require('../lib/constants');
+const { VERSION, RATE_LIMITS, SECURITY, ALLOWED_CATALOG_TYPES, HEALTH_CHECK, FLIXPATROL_COUNTRIES } = require('../lib/constants');
 const { createLogger } = require('../lib/logger');
 const { circuitBreakers, CircuitState } = require('../lib/circuit-breaker');
 const { metrics, trackHttpRequest, trackRateLimitExceeded, trackExternalApiCall } = require('../lib/metrics');
 
 // PERF-04 FIX: All requires at module top level — no require() inside handlers
+
+// SEC-15 FIX: Metrics API key for monitoring endpoint authentication
+const METRICS_API_KEY = process.env.METRICS_API_KEY || '';
 
 // SEC-06 FIX: Initialize rate limiters per route category
 const rateLimiters = {
@@ -50,17 +57,23 @@ const rateLimiters = {
 // ============================================================
 
 /**
- * Get client IP from Vercel headers.
+ * SEC-16 FIX: Get client IP from Vercel headers.
+ * Uses the RIGHTMOST IP in x-forwarded-for as the client IP,
+ * because Vercel (and most CDNs) append the real client IP at the end.
+ * The leftmost entries can be set by any upstream proxy and are untrusted.
  * @param {Object} req
  * @returns {string}
  */
 function getClientIp(req) {
-    return (
-        req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
-        req.headers['x-real-ip'] ||
-        req.socket?.remoteAddress ||
-        'unknown'
-    );
+    const forwarded = req.headers['x-forwarded-for'];
+    if (forwarded) {
+        // Vercel appends the real client IP as the last entry
+        const ips = forwarded.split(',').map(ip => ip.trim()).filter(ip => ip);
+        if (ips.length > 0) {
+            return ips[ips.length - 1] || 'unknown';
+        }
+    }
+    return req.headers['x-real-ip'] || req.socket?.remoteAddress || 'unknown';
 }
 
 /**
@@ -76,6 +89,93 @@ function extractHostname(urlString) {
     } catch {
         return '';
     }
+}
+
+/**
+ * SEC-02 FIX: Validate that an origin matches the current deployment.
+ * Only allows the exact host from the Host header — no wildcard .vercel.app.
+ * @param {string} originHost - Hostname from the Origin header
+ * @param {string} requestHost - Host header value from the request
+ * @returns {boolean}
+ */
+function isOriginAllowed(originHost, requestHost) {
+    if (!originHost || !requestHost) return false;
+    // Exact match: the origin host must match the request host exactly
+    const normalizedRequestHost = requestHost.split(':')[0].toLowerCase();
+    return originHost === normalizedRequestHost;
+}
+
+/**
+ * SEC-028 FIX: Shared token validation for manifest and catalog handlers.
+ * Ensures consistent validation across all token-accepting endpoints.
+ * SEC-015 FIX: Proper URL-encoded validation using regex.
+ * @param {string} token
+ * @returns {{ valid: boolean, format: string|null }}
+ */
+function validateTokenFormat(token) {
+    // New encrypted format: URL-safe base64 with dots
+    const isNewToken = /^[A-Za-z0-9._~-]+$/.test(token) && token.length > 50;
+    // Legacy format: 32-char hex or URL-encoded JSON starting with %7B ({)
+    const isLegacyToken = /^[a-zA-Z0-9]{32}$/.test(token) || token.startsWith('%7B');
+    // SEC-015 FIX: Proper URL-encoded validation — % must be followed by 2 hex digits
+    const isUrlEncoded = /%[0-9A-Fa-f]{2}/.test(token);
+
+    if (isNewToken) return { valid: true, format: 'new' };
+    if (isLegacyToken) return { valid: true, format: 'legacy' };
+    if (isUrlEncoded) return { valid: true, format: 'urlencoded' };
+    return { valid: false, format: null };
+}
+
+/**
+ * SEC-009/SEC-024 FIX: Validate country parameter against known country list.
+ * For comma-separated multi-country values, validates each individual country.
+ * Also enforces maximum length (500 chars) to prevent token bloat.
+ * @param {string} countryValue
+ * @returns {{ valid: boolean, error: string|null, normalized: string }}
+ */
+function validateCountry(countryValue) {
+    if (!countryValue || typeof countryValue !== 'string') {
+        return { valid: false, error: 'Country is required', normalized: '' };
+    }
+    const trimmed = countryValue.trim();
+    if (trimmed.length > 500) {
+        return { valid: false, error: 'Country value too long (max 500 chars)', normalized: '' };
+    }
+    if (!trimmed) {
+        return { valid: false, error: 'Country is required', normalized: '' };
+    }
+
+    // Split on commas for multi-country support
+    const countries = trimmed.split(',').map(c => c.trim()).filter(c => c);
+    if (countries.length === 0) {
+        return { valid: false, error: 'At least one country is required', normalized: '' };
+    }
+
+    // Validate each country against the whitelist (case-insensitive)
+    const validCountries = [];
+    for (const c of countries) {
+        const match = FLIXPATROL_COUNTRIES.find(
+            fc => fc.toLowerCase() === c.toLowerCase()
+        );
+        if (match) {
+            validCountries.push(match);
+        } else {
+            return { valid: false, error: `Unknown country: "${c}"`, normalized: '' };
+        }
+    }
+
+    return { valid: true, error: null, normalized: validCountries.join(',') };
+}
+
+/**
+ * SEC-017 FIX: Validate x-forwarded-proto header value.
+ * Only allows 'http' or 'https' — rejects arbitrary values.
+ * @param {string|undefined} proto
+ * @returns {string} 'https' or 'http'
+ */
+function validateForwardedProto(proto) {
+    if (proto === 'http' || proto === 'https') return proto;
+    return 'https'; // Default to https if header is missing or invalid
 }
 
 /**
@@ -97,52 +197,69 @@ function isValidHost(host) {
 }
 
 /**
- * SEC-10 FIX: Apply security headers to all responses.
+ * Generate a cryptographically secure nonce for CSP.
+ * @returns {string} Base64-encoded random nonce
+ */
+function generateCspNonce() {
+    return crypto.randomBytes(16).toString('base64');
+}
+
+/**
+ * SEC-08 FIX: Apply security headers to all responses.
+ * Nonce-based CSP for HTML pages (replaces NONCE placeholder).
+ * SEC-022 FIX: Set HSTS unconditionally (Vercel always serves HTTPS).
+ * SEC-017 FIX: Validate x-forwarded-proto before trusting it.
+ * SEC-031 FIX: Add Cache-Control: no-store on error responses.
  * @param {Object} res
  * @param {boolean} isHtml - Whether the response is HTML
+ * @param {string} [nonce] - CSP nonce for HTML responses
+ * @param {boolean} [isError=false] - Whether this is an error response
  */
-function setSecurityHeaders(res, isHtml = false) {
+function setSecurityHeaders(res, isHtml = false, nonce = '', isError = false) {
     // Prevent MIME type sniffing
     res.setHeader('X-Content-Type-Options', 'nosniff');
     // Prevent clickjacking
     res.setHeader('X-Frame-Options', 'DENY');
-    // XSS protection for older browsers
-    res.setHeader('X-XSS-Protection', '1; mode=block');
     // Referrer policy
     res.setHeader('Referrer-Policy', SECURITY.REFERRER_POLICY);
     // Permissions policy
     res.setHeader('Permissions-Policy', SECURITY.PERMISSIONS_POLICY);
-    // HSTS (only for HTTPS)
-    const proto = res.req?.headers?.['x-forwarded-proto'];
-    if (proto === 'https') {
-        res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    // SEC-022 FIX: HSTS unconditionally — Vercel always serves HTTPS.
+    // Setting it unconditionally provides defense-in-depth against header stripping.
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    // SEC-031 FIX: Prevent caching of error responses
+    if (isError) {
+        res.setHeader('Cache-Control', 'no-store');
     }
 
-    if (isHtml) {
-        res.setHeader('Content-Security-Policy', SECURITY.CONTENT_SECURITY_POLICY);
+    if (isHtml && nonce) {
+        // SEC-08 FIX: Replace NONCE placeholder with actual nonce value
+        const csp = SECURITY.CONTENT_SECURITY_POLICY.replace(/NONCE/g, nonce);
+        res.setHeader('Content-Security-Policy', csp);
     }
 }
 
 /**
- * SEC-02 FIX: Set CORS headers — wildcard for GET (public API), restrictive for mutations.
- * Uses exact hostname comparison instead of substring .includes().
+ * SEC-02 FIX: Set CORS headers — restrictive for mutations.
+ * Uses exact hostname comparison instead of substring or wildcard.
+ * SEC-019 FIX: Dynamic Access-Control-Allow-Methods per endpoint type.
  * @param {Object} res
  * @param {boolean} isMutation - Whether the endpoint modifies state
+ * @param {string} [allowedMethods='GET,OPTIONS'] - Methods to advertise
  */
-function setCORSHeaders(res, isMutation = false) {
-    // For public read-only endpoints, allow all origins
-    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+function setCORSHeaders(res, isMutation = false, allowedMethods = 'GET,OPTIONS') {
+    // SEC-019 FIX: Only advertise methods the endpoint actually supports
+    res.setHeader('Access-Control-Allow-Methods', allowedMethods);
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
     const origin = res.req?.headers?.origin;
     if (origin) {
         if (isMutation) {
-            // SEC-02 FIX: Exact hostname comparison — not substring match
+            // SEC-02 FIX: Exact hostname comparison — no .vercel.app wildcard
             const originHost = extractHostname(origin);
             const hostHeader = (res.req?.headers?.host || '').toLowerCase();
-            const reqHost = hostHeader.split(':')[0]; // Strip port for comparison
 
-            if (originHost === reqHost || originHost.endsWith('.vercel.app')) {
+            if (isOriginAllowed(originHost, hostHeader)) {
                 res.setHeader('Access-Control-Allow-Origin', origin);
                 res.setHeader('Vary', 'Origin');
             }
@@ -157,19 +274,46 @@ function setCORSHeaders(res, isMutation = false) {
 }
 
 /**
+ * SEC-006 FIX: Recursively sanitize object keys to prevent prototype pollution.
+ * Strips __proto__, constructor, and prototype from all nested objects.
+ * @param {*} obj
+ * @returns {*}
+ */
+function sanitizePrototypeKeys(obj) {
+    if (obj === null || typeof obj !== 'object') return obj;
+    if (Array.isArray(obj)) return obj.map(sanitizePrototypeKeys);
+    const sanitized = {};
+    for (const [key, value] of Object.entries(obj)) {
+        if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+        sanitized[key] = sanitizePrototypeKeys(value);
+    }
+    return sanitized;
+}
+
+/**
  * SEC-09 FIX: Safely parse JSON body with size and depth limits.
+ * SEC-09 NEW: Check Content-Length header first (before Vercel auto-parse).
+ * SEC-006 FIX: Sanitize prototype pollution keys before processing.
  * LOG-01 FIX: Uses WeakSet to detect circular references in depth calculation.
- * Vercel (@vercel/node) auto-parses JSON bodies, so req.body is already an object.
  * @param {Object} req
  * @returns {{ body: Object|null, error: string|null }}
  */
 function safeParseBody(req) {
-    // Vercel auto-parses JSON request bodies — just validate
+    // SEC-09 NEW: Check Content-Length header to catch oversized bodies
+    // before Vercel auto-parses them (Vercel has a 4.5MB limit, we want 100KB)
+    const contentLength = parseInt(req.headers['content-length'], 10);
+    if (!isNaN(contentLength) && contentLength > SECURITY.MAX_REQUEST_BODY_BYTES) {
+        return { body: null, error: 'Request body too large' };
+    }
+
+    // Vercel auto-parses JSON request bodies — validate and sanitize
     if (req.body && typeof req.body === 'object') {
         if (getJsonDepth(req.body) > SECURITY.MAX_JSON_DEPTH) {
             return { body: null, error: 'JSON depth exceeds limit' };
         }
-        return { body: req.body, error: null };
+        // SEC-006 FIX: Strip prototype pollution keys from parsed body
+        const sanitized = sanitizePrototypeKeys(req.body);
+        return { body: sanitized, error: null };
     }
 
     // Fallback: if body came as a string (shouldn't happen on Vercel)
@@ -219,10 +363,35 @@ function getJsonDepth(obj, seen) {
  */
 function safeTokenHash(token) {
     try {
-        return crypto.createHash('sha256').update(token).digest('hex').substring(0, 12);
+        // SEC-032 FIX: Use 16 hex chars (64 bits) for stronger collision resistance
+        return crypto.createHash('sha256').update(token).digest('hex').substring(0, 16);
     } catch {
         return '(hash-error)';
     }
+}
+
+/**
+ * SEC-15 FIX: Verify metrics API key from Bearer token or query param.
+ * @param {Object} req
+ * @returns {boolean}
+ */
+function isMetricsAuthenticated(req) {
+    // If no METRICS_API_KEY is configured, metrics are disabled (return false)
+    if (!METRICS_API_KEY) return false;
+
+    // Check Authorization: Bearer <key> header
+    const authHeader = req.headers['authorization'];
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        return authHeader.substring(7) === METRICS_API_KEY;
+    }
+
+    // Check query parameter as fallback for Prometheus scraper compatibility
+    const queryKey = req.query?.api_key || new URL(req.url || '/', 'http://localhost').searchParams.get('api_key');
+    if (queryKey) {
+        return queryKey === METRICS_API_KEY;
+    }
+
+    return false;
 }
 
 /**
@@ -242,7 +411,7 @@ async function checkDependencies(logger) {
             failureCount: tmdbCheck.failureCount,
         };
     } catch (e) {
-        results.tmdb = { status: 'unknown', error: e.message };
+        results.tmdb = { status: 'unknown' };
     }
 
     // Check FlixPatrol
@@ -254,7 +423,7 @@ async function checkDependencies(logger) {
             failureCount: flixpatrolCheck.failureCount,
         };
     } catch (e) {
-        results.flixpatrol = { status: 'unknown', error: e.message };
+        results.flixpatrol = { status: 'unknown' };
     }
 
     return results;
@@ -290,12 +459,12 @@ function checkRateLimit(res, key, routeName, method, pathWithoutQuery, trackResp
 
 /**
  * SEC-03 FIX: Rate-limited config page handler.
- * @param {Object} req
- * @param {Object} res
- * @param {Function} trackResponse
+ * SEC-08 FIX: CSP nonce applied for HTML responses.
+ * SEC-019 FIX: Only advertise GET,OPTIONS for read-only page.
  */
-function handleConfigPage(req, res, trackResponse) {
-    setCORSHeaders(res);
+function handleConfigPage(req, res, trackResponse, nonce) {
+    setCORSHeaders(res, false, 'GET,OPTIONS');
+    setSecurityHeaders(res, true, nonce); // SEC-08 FIX: Apply CSP with nonce to HTML
     const clientIp = getClientIp(req);
     if (!checkRateLimit(res, `${clientIp}:config`, 'configPage', req.method, '/configure', trackResponse)) return;
 
@@ -303,15 +472,22 @@ function handleConfigPage(req, res, trackResponse) {
     trackResponse(200);
     return res.status(200)
         .setHeader("Content-Type", "text/html;charset=UTF-8")
-        .send(buildConfigHTML(countries));
+        .send(buildConfigHTML(countries, nonce));
 }
 
 /**
- * Metrics endpoint — Prometheus-compatible.
- * SEC-06 FIX: Protected by rate limiting.
+ * SEC-15 FIX: Metrics endpoint — requires METRICS_API_KEY authentication.
+ * Without the key, returns 403 (not 404 — that would hide the endpoint's existence).
  */
 function handleMetrics(req, res, trackResponse) {
-    setCORSHeaders(res);
+    setCORSHeaders(res, false, 'GET,OPTIONS');
+
+    // SEC-15 FIX: Require authentication for metrics
+    if (!isMetricsAuthenticated(req)) {
+        trackResponse(403);
+        return res.status(403).json({ error: 'Forbidden' });
+    }
+
     const clientIp = getClientIp(req);
     const pathWithoutQuery = req.url.split('?')[0];
     if (!checkRateLimit(res, `${clientIp}:metrics`, 'metrics', req.method, pathWithoutQuery, trackResponse)) return;
@@ -326,7 +502,7 @@ function handleMetrics(req, res, trackResponse) {
  * Health check — permissive rate limit.
  */
 async function handleHealth(req, res, trackResponse, logger) {
-    setCORSHeaders(res);
+    setCORSHeaders(res, false, 'GET,OPTIONS');
     const clientIp = getClientIp(req);
     const pathWithoutQuery = req.url.split('?')[0];
     if (!checkRateLimit(res, `${clientIp}:health`, 'health', req.method, pathWithoutQuery, trackResponse)) return;
@@ -352,10 +528,17 @@ async function handleHealth(req, res, trackResponse, logger) {
 }
 
 /**
- * SEC-06 FIX: Circuit breaker status endpoint — rate limited.
+ * SEC-15 FIX: Circuit breaker status endpoint — requires authentication.
  */
 function handleCircuitBreakerStatus(req, res, trackResponse) {
-    setCORSHeaders(res);
+    setCORSHeaders(res, false, 'GET,OPTIONS');
+
+    // SEC-15 FIX: Require authentication
+    if (!isMetricsAuthenticated(req)) {
+        trackResponse(403);
+        return res.status(403).json({ error: 'Forbidden' });
+    }
+
     const clientIp = getClientIp(req);
     if (!checkRateLimit(res, `${clientIp}:status`, 'health', req.method, '/status/circuit-breakers', trackResponse)) return;
 
@@ -371,7 +554,7 @@ function handleCircuitBreakerStatus(req, res, trackResponse) {
  * API: Validate TMDB key (rate limited).
  */
 async function handleValidateTmdbKey(req, res, trackResponse, logger) {
-    setCORSHeaders(res, true); // mutation endpoint
+    setCORSHeaders(res, true, 'POST,OPTIONS'); // SEC-019 FIX: Only POST for mutation
     const clientIp = getClientIp(req);
     const pathWithoutQuery = req.url.split('?')[0];
     if (!checkRateLimit(res, `${clientIp}:validate`, 'api', req.method, pathWithoutQuery, trackResponse)) return;
@@ -412,10 +595,10 @@ async function handleValidateTmdbKey(req, res, trackResponse, logger) {
 /**
  * API: Save config (rate limited, strict CORS).
  * SEC-07 FIX: Clean 400 response without reflected host when host is invalid.
- * LOG-02 FIX: Returns a simple error object, no confusing URL with bad host.
+ * SEC-14 FIX: Error messages generalized — no internal details leaked.
  */
 async function handleSaveConfig(req, res, trackResponse, logger) {
-    setCORSHeaders(res, true); // mutation endpoint
+    setCORSHeaders(res, true, 'POST,OPTIONS'); // SEC-019 FIX: Only POST for mutation
     const clientIp = getClientIp(req);
     const pathWithoutQuery = req.url.split('?')[0];
     if (!checkRateLimit(res, `${clientIp}:save`, 'api', req.method, pathWithoutQuery, trackResponse)) return;
@@ -438,6 +621,13 @@ async function handleSaveConfig(req, res, trackResponse, logger) {
         return res.status(400).json({ error: "Invalid TMDB API key format" });
     }
 
+    // SEC-020 FIX: Validate RPDB API key length before storing
+    const rpdbApiKey = (body?.rpdbApiKey || '').trim();
+    if (rpdbApiKey && rpdbApiKey.length > 200) {
+        trackResponse(400);
+        return res.status(400).json({ error: "RPDB API key too long (max 200 chars)" });
+    }
+
     // SEC-07 FIX: Validate host header before using it in URLs
     const host = req.headers['host'] || '';
     if (!isValidHost(host)) {
@@ -449,14 +639,22 @@ async function handleSaveConfig(req, res, trackResponse, logger) {
         });
     }
 
-    const protocol = req.headers['x-forwarded-proto'] || 'https';
+    // SEC-009/SEC-024 FIX: Validate country against whitelist
+    const countryValidation = validateCountry(body?.country);
+    if (!countryValidation.valid) {
+        trackResponse(400);
+        return res.status(400).json({ error: countryValidation.error });
+    }
+
+    // SEC-017 FIX: Validate x-forwarded-proto before using for URL construction
+    const protocol = validateForwardedProto(req.headers['x-forwarded-proto']);
     const baseUrl = `${protocol}://${host}`;
 
     // Sanitize type override strings
     const safeConfig = {
         tmdbApiKey,
-        rpdbApiKey: (body?.rpdbApiKey || '').trim() || undefined,
-        country: String(body?.country || 'Global'),
+        rpdbApiKey: rpdbApiKey || undefined,
+        country: countryValidation.normalized,
         movieType: sanitizeTypeString(body?.movieType) || undefined,
         seriesType: sanitizeTypeString(body?.seriesType) || undefined,
     };
@@ -477,15 +675,18 @@ async function handleSaveConfig(req, res, trackResponse, logger) {
     } catch (e) {
         logger.error('Failed to save config', { error: e.message });
         trackResponse(500);
+        // SEC-14 FIX: Don't leak error details to client
         return res.status(500).json({ error: "Failed to save configuration" });
     }
 }
 
 /**
  * SEC-03 FIX: Rate-limited config page for token-based route.
+ * SEC-08 FIX: CSP nonce applied for HTML responses.
  */
-function handleTokenConfigPage(req, res, trackResponse) {
-    setCORSHeaders(res);
+function handleTokenConfigPage(req, res, trackResponse, nonce) {
+    setCORSHeaders(res, false, 'GET,OPTIONS');
+    setSecurityHeaders(res, true, nonce); // SEC-08 FIX: Apply CSP with nonce to HTML
     const clientIp = getClientIp(req);
     if (!checkRateLimit(res, `${clientIp}:config`, 'configPage', req.method, '/config', trackResponse)) return;
 
@@ -493,7 +694,7 @@ function handleTokenConfigPage(req, res, trackResponse) {
     trackResponse(200);
     return res.status(200)
         .setHeader("Content-Type", "text/html;charset=UTF-8")
-        .send(buildConfigHTML(countries));
+        .send(buildConfigHTML(countries, nonce));
 }
 
 /**
@@ -501,15 +702,13 @@ function handleTokenConfigPage(req, res, trackResponse) {
  * SEC-09b FIX: Token hash logged instead of prefix.
  */
 async function handleManifest(req, res, token, trackResponse, logger) {
-    setCORSHeaders(res);
+    setCORSHeaders(res, false, 'GET,OPTIONS');
     const clientIp = getClientIp(req);
     if (!checkRateLimit(res, `${clientIp}:manifest`, 'manifest', req.method, '/manifest.json', trackResponse)) return;
 
-    // Validate token: URL-safe base64 with dots (encrypted) or legacy format
-    const isNewToken = /^[A-Za-z0-9._~-]+$/.test(token) && token.length > 50;
-    const isLegacyToken = /^[a-zA-Z0-9]{32}$/.test(token) || token.startsWith('%7B');
-
-    if (!isNewToken && !isLegacyToken) {
+    // Validate token using shared validation function (SEC-028 FIX)
+    const tokenCheck = validateTokenFormat(token);
+    if (!tokenCheck.valid) {
         trackResponse(400);
         return res.status(400).json({ error: 'Invalid token format' });
     }
@@ -545,16 +744,13 @@ async function handleManifest(req, res, token, trackResponse, logger) {
  * SEC-09b FIX: Token hash in log instead of prefix.
  */
 async function handleCatalog(req, res, token, catalogType, catalogId, trackResponse, logger) {
-    setCORSHeaders(res);
+    setCORSHeaders(res, false, 'GET,OPTIONS');
     const clientIp = getClientIp(req);
     if (!checkRateLimit(res, `${clientIp}:catalog`, 'catalog', req.method, '/catalog', trackResponse)) return;
 
-    // Validate token: accept new encrypted format, legacy format, or URL-encoded JSON
-    const isNewToken = /^[A-Za-z0-9._~-]+$/.test(token) && token.length > 50;
-    const isLegacyToken = /^[a-zA-Z0-9]{32}$/.test(token);
-    const isUrlEncoded = token.includes('%') || token.startsWith('%7B');
-
-    if (!isNewToken && !isLegacyToken && !isUrlEncoded) {
+    // SEC-028 FIX: Shared token validation
+    const tokenCheck = validateTokenFormat(token);
+    if (!tokenCheck.valid) {
         trackResponse(400);
         return res.status(400).json({ error: 'Invalid token format' });
     }
@@ -617,17 +813,34 @@ module.exports = async (req, res) => {
     const requestId = generateRequestId().substring(0, 16); // Shorter for logs
     const logger = createLogger(requestId);
 
+    // Generate CSP nonce for this request (used if HTML is served)
+    const cspNonce = generateCspNonce();
+
     // Attach request ID to response headers
     res.setHeader('X-Request-Id', requestId);
 
-    // Security headers on all responses
-    setSecurityHeaders(res);
+    // Security headers on all responses (non-HTML)
+    setSecurityHeaders(res, false, cspNonce);
 
     // Handle CORS preflight
+    // SEC-018 FIX: Apply lightweight rate limiting to OPTIONS requests
     if (req.method === 'OPTIONS') {
         setCORSHeaders(res);
         res.setHeader('Access-Control-Max-Age', '86400');
+        // SEC-018 FIX: Rate limit OPTIONS to prevent quota exhaustion
+        const optIp = getClientIp(req);
+        const optRl = rateLimiters.health.check(`${optIp}:options`);
+        if (!optRl.allowed) {
+            return res.status(429).end();
+        }
         return res.status(200).end();
+    }
+
+    // SEC-030 FIX: Enforce HTTPS redirect for non-HTTPS requests
+    const forwardedProto = req.headers['x-forwarded-proto'];
+    if (forwardedProto && forwardedProto !== 'https') {
+        const httpsUrl = `https://${req.headers['host'] || ''}${req.url}`;
+        return res.status(301).setHeader('Location', httpsUrl).end();
     }
 
     // Normalize path
@@ -657,11 +870,12 @@ module.exports = async (req, res) => {
         // Configuration page (root & /configure)
         // -----------------------------------------------
         if (pathWithoutQuery === "/" || pathWithoutQuery === "/configure") {
-            return handleConfigPage(req, res, trackResponse);
+            return handleConfigPage(req, res, trackResponse, cspNonce);
         }
 
         // -----------------------------------------------
         // Metrics endpoint — Prometheus-compatible
+        // SEC-15 FIX: Requires METRICS_API_KEY authentication
         // -----------------------------------------------
         if (pathWithoutQuery === "/metrics") {
             return handleMetrics(req, res, trackResponse);
@@ -676,6 +890,7 @@ module.exports = async (req, res) => {
 
         // -----------------------------------------------
         // Circuit breaker status endpoint
+        // SEC-15 FIX: Requires METRICS_API_KEY authentication
         // -----------------------------------------------
         if (pathWithoutQuery === "/status/circuit-breakers") {
             return handleCircuitBreakerStatus(req, res, trackResponse);
@@ -700,7 +915,7 @@ module.exports = async (req, res) => {
         // -----------------------------------------------
         const configPageMatch = pathWithoutQuery.match(/^\/([^/]+)\/config(?:ure)?$/);
         if (configPageMatch) {
-            return handleTokenConfigPage(req, res, trackResponse);
+            return handleTokenConfigPage(req, res, trackResponse, cspNonce);
         }
 
         // -----------------------------------------------
@@ -723,14 +938,21 @@ module.exports = async (req, res) => {
 
         // -----------------------------------------------
         // 404 — Don't leak information
+        // SEC-031 FIX: no-store on error
         // -----------------------------------------------
-        setCORSHeaders(res);
+        setCORSHeaders(res, false, 'GET,OPTIONS');
         trackResponse(404);
-        return res.status(404).send("Not Found");
+        return res.status(404)
+            .setHeader('Cache-Control', 'no-store')
+            .send("Not Found");
     } catch (fatalError) {
         // Catch-all for unexpected errors in route handlers
         logger.error('Unhandled error in request handler', { error: fatalError.message });
         trackResponse(500);
-        return res.status(500).json({ error: 'Internal server error' });
+        // SEC-14 FIX: Don't leak error details
+        // SEC-031 FIX: no-store on error
+        return res.status(500)
+            .setHeader('Cache-Control', 'no-store')
+            .json({ error: 'Internal server error' });
     }
 };

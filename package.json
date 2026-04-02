@@ -1,6 +1,6 @@
 {
   "name": "netflix-top-10-stremio",
-  "version": "3.7.2",
+  "version": "3.7.4",
   "description": "Live Netflix Top 10 rankings per-country for Stremio",
   "main": "api/index.js",
   "scripts": {
@@ -10,7 +10,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "cheerio": "1.0.0-rc.12"
+    "cheerio": "^1.0.0"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "^3.2.4",
