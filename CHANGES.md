@@ -1,220 +1,266 @@
-# Streaming-Top-10 v3.7.4 — Comprehensive Security Patch
+# Streaming-Top-10 Changelog
 
-## Summary of Changes
+---
 
-This security patch fixes **20 additional security issues** discovered during a comprehensive line-by-line security audit, on top of the 36 fixes in v3.7.2/v3.7.3.
+## v3.7.5 — TMDB Authentication Fix
+
+### Summary
+
+Bugfix release that resolves catalog loading failures and TMDB API key validation errors introduced in v3.7.4.
+
+### Files Modified (1 file)
+
+| File | Changes |
+|------|---------|
+| `lib/tmdb.js` | TMDB v3/v4 auto-detection, all API call sites updated |
+| `lib/constants.js` | Version bump |
+
+---
+
+### Bug Fixes
+
+### 1. TMDB v3 API Key Authentication Broken
+
+**Problem:** The v3.7.4 security patch (SEC-05) changed all TMDB authentication to use `Authorization: Bearer` headers exclusively. However, TMDB supports two distinct authentication methods: v3 API keys (32 hexadecimal characters) must use the `?api_key=` query parameter, while only v4 Read Access Tokens (JWT/base64 format) use the Bearer header. Sending a v3 API key as a Bearer token causes TMDB to return 401 Unauthorized, which silently broke all catalog loading, metadata matching, and API key validation.
+
+**Impact:** All users with TMDB v3 API keys (the most common format) experienced complete catalog loading failures after upgrading to v3.7.4. The addon returned empty catalogs without any visible error messages to end users.
+
+**Fix:** Created a new `getTmdbRequestOpts()` function that auto-detects the key format at runtime:
+- **v3 API keys** (exactly 32 hex characters, e.g., `abcdef1234567890abcdef1234567890`) → appends `?api_key=` query parameter
+- **v4 Read Access Tokens** (any other format containing dots, e.g., JWT) → uses `Authorization: Bearer` header
+
+Updated all 4 TMDB API call sites in `_matchTMDBInternal()` (search, find, detail) and `validateTmdbKey()` to use `getTmdbRequestOpts()` instead of hardcoded Bearer auth.
+
+**Files:** `lib/tmdb.js`
+
+### 2. API Key Format Validation Too Restrictive
+
+**Problem:** The `isValidApiKeyFormat()` validation in `api/index.js` rejected valid v4 Read Access Tokens because they contain dot characters (`.`), which were not included in the allowed character set.
+
+**Fix:** Updated the format validation regex to accept dot characters, allowing both v3 keys (`/^[a-f0-9]{32}$/i`) and v4 tokens (containing letters, digits, hyphens, underscores, and dots).
+
+**Files:** `lib/tmdb.js`, `api/index.js`
+
+### 3. README.md Updated
+
+**Problem:** README was still at v3.7.1 and did not reflect any of the security fixes, new features, or deployment changes from v3.7.2 through v3.7.5.
+
+**Fix:** Complete rewrite of README.md with all changelog entries, security architecture documentation, updated environment variables, migration guide, and current API endpoint descriptions.
+
+**Files:** `README.md`
+
+---
+
+## v3.7.4 — Comprehensive Security Patch
+
+### Summary
+
+This security patch fixes **20 additional security issues** discovered during a comprehensive line-by-line security audit, on top of the fixes in v3.7.2/v3.7.3.
 
 ### Files Modified (10 files)
 
 | File | Issues Fixed |
 |------|-------------|
-| `api/index.js` | SEC-006 (prototype pollution), SEC-009/024 (country validation), SEC-015 (token detection), SEC-017 (proto validation), SEC-018 (OPTIONS rate limit), SEC-019 (CORS methods), SEC-028 (token validation dedup), SEC-030 (HTTPS redirect), SEC-031 (error caching), SEC-032 (hash truncation) |
-| `lib/constants.js` | SEC-011 (img-src restriction), SEC-012 (style-src nonce), version bump |
-| `lib/utils.js` | SEC-013 (escapeJs completeness) |
-| `lib/config-store.js` | SEC-016 (legacy parse field allowlisting) |
-| `lib/tmdb.js` | SEC-020 (RPDB key length) |
-| `lib/scraper.js` | SEC-026 (external text sanitization) |
-| `lib/metrics.js` | SEC-029 (path normalization in metrics) |
-| `lib/manifest.js` | SEC-034 (cache key collision) |
-| `lib/template.js` | SEC-012 (nonce on style tag) |
-| `package.json` | SEC-033 (cheerio stable version), version bump |
+| `api/index.js` | SEC-006, SEC-009/024, SEC-015, SEC-017, SEC-018, SEC-019, SEC-028, SEC-030, SEC-031, SEC-032 |
+| `lib/constants.js` | SEC-011, SEC-012, version bump |
+| `lib/utils.js` | SEC-013 |
+| `lib/config-store.js` | SEC-016 |
+| `lib/tmdb.js` | SEC-020 |
+| `lib/scraper.js` | SEC-026 |
+| `lib/metrics.js` | SEC-029 |
+| `lib/manifest.js` | SEC-034 |
+| `lib/template.js` | SEC-012 |
+| `package.json` | SEC-033, version bump |
+
+### High Severity Fixes
+
+| # | ID | Description |
+|---|-----|-------------|
+| 1 | SEC-006 | **Prototype Pollution** — Added recursive `sanitizePrototypeKeys()` to strip `__proto__`, `constructor`, `prototype` from request body |
+| 2 | SEC-009/024 | **Country Validation Missing** — Added `validateCountry()` with whitelist validation + 500-char limit before storing in token |
+| 3 | SEC-030 | **No HTTPS Redirect** — Added 301 redirect for HTTP requests via `x-forwarded-proto` check (defense-in-depth) |
+
+### Medium Severity Fixes
+
+| # | ID | Description |
+|---|-----|-------------|
+| 4 | SEC-011 | **Overly Permissive img-src** — Restricted CSP from `https:` wildcard to specific domains (image.tmdb.org, img.icons8.com, api.ratingposterdb.com) |
+| 5 | SEC-012 | **unsafe-inline in style-src** — Replaced with per-request nonce on `<style>` tag |
+| 6 | SEC-013 | **Incomplete escapeJs()** — Added escapes for `\n`, `\r`, `\0`, `\/`, `\u2028`, `\u2029` |
+| 7 | SEC-015 | **Permissive Token Detection** — Replaced `token.includes('%')` with `/%[0-9A-Fa-f]{2}/` regex |
+| 8 | SEC-016 | **Legacy Config Field Injection** — Added field allowlisting in `parseConfig()` (only known fields accepted) |
+| 9 | SEC-017 | **X-Forwarded-Proto Trust** — Added `validateForwardedProto()` to only accept `http` or `https` |
+| 10 | SEC-018 | **No Rate Limit on OPTIONS** — Applied health rate limiter to CORS preflight requests |
+| 11 | SEC-019 | **CORS Methods Overexposure** — Per-endpoint `Access-Control-Allow-Methods` (least privilege) |
+| 12 | SEC-020 | **RPDB Key Length** — Added 200-char max length check to prevent URL overflow |
+| 13 | SEC-022 | **Conditional HSTS** — Made HSTS unconditional on all responses |
+| 14 | SEC-026 | **Unsanitized HTML Content** — Added `sanitizeExternalText()` for cheerio-extracted text |
+
+### Low Severity Fixes
+
+| # | ID | Description |
+|---|-----|-------------|
+| 15 | SEC-028 | **Token Validation Inconsistency** — Extracted shared `validateTokenFormat()` |
+| 16 | SEC-029 | **Metrics Path Leakage** — Extended path normalization to catalog segments |
+| 17 | SEC-031 | **Error Response Caching** — Added `Cache-Control: no-store` to all error responses |
+| 18 | SEC-032 | **Hash Truncation** — Increased `safeTokenHash` from 12 to 16 hex chars (64-bit) |
+| 19 | SEC-033 | **Pre-Release cheerio** — Updated from `1.0.0-rc.12` to stable `^1.0.0` |
+| 20 | SEC-034 | **Cache Key Collision** — Added pipe character sanitization in manifest cache key |
 
 ---
 
-## High Severity Fixes
+## v3.7.3 — Core Security Hardening
 
-### 1. SEC-006: Prototype Pollution via Unvalidated Request Body (HIGH)
+### Summary
 
-**Problem:** `safeParseBody()` accepted the auto-parsed `req.body` from Vercel without sanitizing for prototype pollution vectors. If Vercel's body parser does not sanitize keys like `__proto__`, `constructor`, or `prototype`, an attacker could inject properties on `Object.prototype`, potentially bypassing validation checks, modifying defaults, or enabling remote code execution.
+Initial security hardening release addressing **11 critical and high-severity issues** from the comprehensive security audit. Includes breaking changes to encryption and deployment requirements.
 
-**Fix:** Added a recursive `sanitizePrototypeKeys()` function that strips `__proto__`, `constructor`, and `prototype` from all nested objects in the request body. Applied at the entry point inside `safeParseBody()` before any processing.
+### Files Modified (7 files)
 
-**Files:** `api/index.js`
+| File | Issues Fixed |
+|------|-------------|
+| `api/index.js` | SEC-02 (CORS), SEC-03 (nonce CSP), SEC-04 (body size limit), SEC-08 (rate limiting), SEC-09 (JSON depth), SEC-10 (HSTS), SEC-11 (deprecated header), SEC-14 (error messages), SEC-15 (metrics auth) |
+| `lib/config-store.js` | SEC-01 (encryption key), SEC-01b (PBKDF2 KDF) |
+| `lib/tmdb.js` | SEC-05 (appendApiKey removal) |
+| `lib/constants.js` | SEC-03 (CSP nonce template) |
+| `lib/template.js` | SEC-03 (nonce attribute) |
+| `lib/utils.js` | SEC-16 (rate limiter IP extraction) |
+| `vercel.json` | SEC-10 (edge HSTS header) |
 
-### 2. SEC-009/SEC-024: No Country Validation Before Storing in Token (HIGH)
+### Fixes
 
-**Problem:** The `country` field from `handleSaveConfig()` was stored directly in the encrypted token without any validation against the allowed country list. An attacker could store arbitrary strings in the country field, which would be echoed back in manifest responses. A very long country string (up to the body size limit) would create an oversized token URL causing errors in Stremio clients.
+| # | ID | Severity | Description |
+|---|-----|----------|-------------|
+| 1 | SEC-01 | CRITICAL | **Predictable Encryption Key Removed** — Removed fallback key derived from hostname. `ENCRYPTION_KEY` env var is now required at startup (min 32 chars). |
+| 2 | SEC-01b | CRITICAL | **PBKDF2 Key Derivation** — Replaced single SHA-256 hash with PBKDF2 (310,000 iterations, OWASP 2023 recommendation). Makes brute-force significantly more expensive. |
+| 3 | SEC-02 | HIGH | **CORS Hostname Matching** — Changed from `.vercel.app` wildcard to exact hostname comparison. Prevents cross-origin attacks from other Vercel deployments. |
+| 4 | SEC-03 | HIGH | **Nonce-Based CSP** — Implemented per-request cryptographic nonce for `script-src` and `style-src`. Eliminates `unsafe-inline`/`unsafe-eval`. |
+| 5 | SEC-04 | HIGH | **Request Body Size Limit** — Added `Content-Length` pre-check (100KB max) before Vercel body parsing. Prevents memory exhaustion attacks. |
+| 6 | SEC-05 | HIGH | **TMDB Auth Centralization** — Removed dead `appendApiKey()` function. All TMDB calls routed through unified auth handling. |
+| 7 | SEC-08 | MEDIUM | **Rate Limiting Expansion** — Added rate limiting to manifest and config page endpoints (previously unprotected). |
+| 8 | SEC-09 | MEDIUM | **JSON Depth Limit** — Added maximum JSON nesting depth validation (10 levels) to prevent stack overflow. |
+| 9 | SEC-10 | LOW | **Edge HSTS** — Added `Strict-Transport-Security` to `vercel.json` edge headers alongside application-level HSTS. |
+| 10 | SEC-11 | LOW | **Deprecated Header Removal** — Removed `X-XSS-Protection` header (deprecated in modern browsers, can be used for mXSS attacks). |
+| 11 | SEC-14 | LOW | **Error Message Sanitization** — Generalized error responses to prevent internal information leakage. |
+| 12 | SEC-15 | HIGH | **Metrics Authentication** — Added `METRICS_API_KEY` requirement for `/metrics` and `/status/circuit-breakers`. Supports both Bearer header and query param auth. |
+| 13 | SEC-16 | LOW | **Rate Limiter IP Extraction** — Uses rightmost IP from `x-forwarded-for` (Vercel's real client IP) instead of first IP (could be spoofed). |
 
-**Fix:** Added a `validateCountry()` function that:
-- Validates each comma-separated country against the `FLIXPATROL_COUNTRIES` whitelist (case-insensitive)
-- Enforces a 500-character maximum length for the entire country value
-- Normalizes the country name to match the official whitelist spelling
-- Rejects any unknown country with a descriptive error message
+### Breaking Changes
 
-**Files:** `api/index.js`
-
-### 3. SEC-030: Missing HTTPS Redirect Enforcement (MEDIUM → HIGH)
-
-**Problem:** The application did not enforce HTTPS by redirecting HTTP requests. If `x-forwarded-proto` indicated HTTP, the request was processed normally without redirect, potentially transmitting sensitive data (API keys, tokens) in plaintext.
-
-**Fix:** Added an explicit HTTPS redirect at the top of the request handler. If `x-forwarded-proto` is present and not `https`, returns a 301 redirect to the HTTPS version of the URL. Vercel's platform handles this at the edge, but this provides defense-in-depth at the application level.
-
-**Files:** `api/index.js`
-
----
-
-## Medium Severity Fixes
-
-### 4. SEC-011: Overly Permissive img-src in CSP (MEDIUM)
-
-**Problem:** The CSP included `img-src https: data:` which allowed loading images from ANY HTTPS source on the internet. This could enable cross-site tracking or data exfiltration via crafted image URLs in user-controlled data.
-
-**Fix:** Replaced the broad `https:` wildcard with specific domains: `img-src https://image.tmdb.org https://img.icons8.com https://api.ratingposterdb.com data:`.
-
-**Files:** `lib/constants.js`
-
-### 5. SEC-012: unsafe-inline Allowed in style-src CSP (MEDIUM)
-
-**Problem:** The CSP included `style-src 'self' 'unsafe-inline'` which weakened CSP and prevented the browser from blocking inline style injection attacks.
-
-**Fix:** Replaced `'unsafe-inline'` with `'nonce-NONCE'` in the `style-src` directive. The same nonce generated per-request is now applied to the `<style>` tag in the template via `<style nonce="${nonce}">`.
-
-**Files:** `lib/constants.js`, `lib/template.js`
-
-### 6. SEC-013: Incomplete escapeJs Function (MEDIUM)
-
-**Problem:** The `escapeJs()` function was missing critical character escapes for newlines (`\n`), carriage returns (`\r`), null bytes (`\0`), forward slashes (`\/`), and Unicode line separators (`\u2028`, `\u2029`). These characters could break out of string literals in JavaScript contexts.
-
-**Fix:** Added all missing character replacements to `escapeJs()`. The function now handles: backslash, quotes, angle brackets, newlines, CR, null bytes, forward slashes, and Unicode line separators.
-
-**Files:** `lib/utils.js`
-
-### 7. SEC-015: Permissive URL-Encoded Token Detection (MEDIUM)
-
-**Problem:** The URL-encoded token check used `token.includes('%')` which was overly permissive. Any token containing a `%` character would pass the check, even if the `%` was not part of a valid URL encoding sequence.
-
-**Fix:** Replaced with a regex check `/%[0-9A-Fa-f]{2}/` that verifies `%` is followed by exactly two hexadecimal digits. Extracted into a shared `validateTokenFormat()` function used by both manifest and catalog handlers.
-
-**Files:** `api/index.js`
-
-### 8. SEC-016: Legacy Config Parsing Accepts Arbitrary JSON Fields (MEDIUM)
-
-**Problem:** `parseConfig()` (for backward compatibility with legacy tokens) accepted any arbitrary additional fields without schema validation. These extra fields were silently ignored but could interact with downstream code if new fields are added.
-
-**Fix:** Added explicit field allowlisting. Only `tmdbApiKey`, `rpdbApiKey`, `country`, `movieType`, and `seriesType` are accepted. Tokens containing unknown fields are rejected.
-
-**Files:** `lib/config-store.js`
-
-### 9. SEC-017: X-Forwarded-Proto Trusted Without Validation (MEDIUM)
-
-**Problem:** The `x-forwarded-proto` header was trusted in `handleSaveConfig()` for constructing manifest URLs and in `setSecurityHeaders()` for HSTS. If spoofed to an invalid value, it could cause protocol downgrade or header manipulation.
-
-**Fix:** Added a `validateForwardedProto()` function that only accepts `'http'` or `'https'`. Any other value defaults to `'https'`. HSTS is now set unconditionally (SEC-022), and URL construction uses the validated protocol.
-
-**Files:** `api/index.js`
-
-### 10. SEC-018: No Rate Limiting on OPTIONS Requests (MEDIUM)
-
-**Problem:** OPTIONS (CORS preflight) requests returned immediately without rate limiting. An attacker could send unlimited OPTIONS requests to exhaust serverless function invocation quotas.
-
-**Fix:** Applied the existing health rate limiter to OPTIONS requests using the client IP key. Excessive preflight requests now receive a 429 response.
-
-**Files:** `api/index.js`
-
-### 11. SEC-019: Access-Control-Allow-Methods Exposes POST on Non-Mutation Endpoints (MEDIUM)
-
-**Problem:** All endpoints advertised `Access-Control-Allow-Methods: GET,POST,OPTIONS` regardless of whether the endpoint supported POST. This violated the principle of least privilege.
-
-**Fix:** Made `setCORSHeaders()` accept an `allowedMethods` parameter. Read-only endpoints now only advertise `GET,OPTIONS`. Mutation endpoints (`/api/validate-tmdb-key`, `/api/save-config`) advertise `POST,OPTIONS`.
-
-**Files:** `api/index.js`
-
-### 12. SEC-020: RPDB API Key Not Length-Validated (MEDIUM)
-
-**Problem:** `getRpdbPosterUrl()` validated the RPDB API key format but not its length. An arbitrarily long key would create an excessively long URL exceeding typical URL length limits (~2048 chars).
-
-**Fix:** Added a 200-character maximum length check in `getRpdbPosterUrl()` and in `handleSaveConfig()` when accepting the RPDB key from the request body.
-
-**Files:** `lib/tmdb.js`, `api/index.js`
-
-### 13. SEC-022: HSTS Header Conditional (MEDIUM)
-
-**Problem:** HSTS was only set when `x-forwarded-proto === 'https'`. If the header was missing, HSTS would not be set, leaving the connection vulnerable to protocol downgrade attacks.
-
-**Fix:** HSTS is now set unconditionally on all responses. Vercel always serves HTTPS, so this provides defense-in-depth against header stripping.
-
-**Files:** `api/index.js`
-
-### 14. SEC-026: Cheerio HTML Parsing of Untrusted Content (MEDIUM)
-
-**Problem:** Text extracted from FlixPatrol HTML via cheerio was used directly in TMDB search queries, cache keys, and catalog responses without sanitization. If FlixPatrol served malicious content, specially crafted text could affect downstream processing.
-
-**Fix:** Added a `sanitizeExternalText()` function that strips non-printable control characters, normalizes Unicode whitespace, collapses multiple whitespace into single spaces, and enforces a maximum length of 200 characters. Applied to all text extraction points in the scraper.
-
-**Files:** `lib/scraper.js`
+- **`ENCRYPTION_KEY` is now required** — Application will fail to start without it
+- **Existing tokens invalidated** — Tokens encrypted with the old key (v3.7.2 and earlier) cannot be decrypted with PBKDF2-derived keys. Users must regenerate install links.
+- **Metrics endpoints require auth** — `/metrics` and `/status/circuit-breakers` return 401 without `METRICS_API_KEY`
 
 ---
 
-## Low Severity Fixes
+## v3.7.2 — Performance & Reliability
 
-### 15. SEC-028: Token Validation Inconsistent Between Handlers (LOW)
+### Summary
 
-**Problem:** Token format validation was duplicated between `handleManifest()` and `handleCatalog()` with slight variations. The manifest handler did not include the `isUrlEncoded` check.
+Comprehensive performance optimization and reliability improvements based on code review findings.
 
-**Fix:** Extracted a shared `validateTokenFormat()` function used by both handlers. Ensures consistent validation across all token-accepting endpoints.
+### Performance Fixes
 
-**Files:** `api/index.js`
+| # | ID | Description |
+|---|-----|-------------|
+| 1 | PERF-01 | Reduced TMDB API calls via batch approach (`append_to_response=external_ids`) |
+| 2 | PERF-02 | LRU cache with proper eviction strategy and TTL support |
+| 3 | PERF-03 | Module-level HTML caching for scraped pages |
+| 4 | PERF-04 | Top-level `require()` calls only (no lazy loading overhead) |
+| 5 | PERF-06 | Manifest caching by input signature |
+| 6 | PERF-07 | O(n) deduplication with Sets |
+| 7 | PERF-10 | In-flight request deduplication to prevent duplicate concurrent API calls |
 
-### 16. SEC-029: Metrics Exposes Request Path Patterns (LOW)
+### Reliability Fixes
 
-**Problem:** `sanitizePathForMetrics()` only replaced token segments but not catalog type/ID segments, allowing attackers to observe which catalogs and types were being accessed.
-
-**Fix:** Extended `sanitizePathForMetrics()` to also normalize catalog path segments (`/catalog/{type}/{id}`), reducing cardinality and information leakage.
-
-**Files:** `lib/metrics.js`
-
-### 17. SEC-031: No Cache-Control on Error Responses (LOW)
-
-**Problem:** Error responses (400, 429, 500, 503, 404) did not include `Cache-Control` headers. Aggressive caching proxies might cache error responses and serve them to subsequent legitimate requests.
-
-**Fix:** Added `Cache-Control: no-store` to all error responses: 404, 500, and via the `setSecurityHeaders(isError=true)` parameter.
-
-**Files:** `api/index.js`
-
-### 18. SEC-032: safeTokenHash Truncation Reduces Collision Resistance (LOW)
-
-**Problem:** The `safeTokenHash()` function only used 12 hex characters (48 bits) of the SHA-256 hash, which could lead to collisions in systems processing millions of tokens.
-
-**Fix:** Increased from 12 to 16 hex characters (64 bits), providing stronger collision resistance with negligible impact on log readability.
-
-**Files:** `api/index.js`
-
-### 19. SEC-033: Pre-Release cheerio Version (LOW)
-
-**Problem:** The cheerio dependency was set to version `1.0.0-rc.12` (a release candidate). Pre-release versions may contain undiscovered security vulnerabilities or parsing bugs.
-
-**Fix:** Updated to `^1.0.0` to use the stable release. The caret range allows patch updates while preventing major version breaking changes.
-
-**Files:** `package.json`
-
-### 20. SEC-034: Manifest Cache Key Collision (LOW)
-
-**Problem:** The manifest cache key used pipe characters (`|`) as separators. If any parameter value (country, type) contained a pipe character, it could create cache key collisions.
-
-**Fix:** Added pipe character sanitization to `getManifestCacheKey()`. All values used in cache keys have `|` characters stripped before concatenation.
-
-**Files:** `lib/manifest.js`
+| # | ID | Description |
+|---|-----|-------------|
+| 8 | REL-01 | Multiple scraping strategies with fallbacks for different FlixPatrol layouts |
+| 9 | REL-02 | Comprehensive error logging in all catch blocks |
+| 10 | REL-03 | Race condition fixes in deduplication (store promise before awaiting) |
 
 ---
 
-## Deployment Instructions
+## v3.7.1 — Scraper Fix
 
-### Prerequisites
+### Summary
 
-This release maintains the same breaking changes from v3.7.3:
-- `ENCRYPTION_KEY` environment variable is **required**
-- Optional `METRICS_API_KEY` for monitoring endpoints
+Bugfix release for FlixPatrol scraping compatibility.
 
-### Upgrade Steps
+### Fixes
+
+- Updated scraper to handle FlixPatrol's new HTML structure (section IDs `#toc-netflix-movies` and `#toc-netflix-tv-shows`)
+- Added multiple fallback strategies for different page layouts
+
+---
+
+## v3.7.0 — Observability & Monitoring
+
+### Summary
+
+Major feature release adding observability, monitoring, and reliability infrastructure.
+
+### New Features
+
+| Feature | Description |
+|---------|-------------|
+| **Request ID Tracing** | Unique `X-Request-Id` header on every request for distributed tracing |
+| **Structured JSON Logging** | Cloud-friendly JSON log format for easier parsing and analysis |
+| **Prometheus Metrics** | `/metrics` endpoint with `http_requests_total`, `http_request_duration_seconds`, cache stats, external API stats |
+| **Circuit Breaker** | Protects against cascading failures from TMDB, FlixPatrol, and RPDB outages |
+| **Enhanced Health Checks** | `/health` reports dependency status, circuit breaker states, and rate limit config |
+| **OpenAPI Documentation** | Full API specification in `openapi.json` |
+
+---
+
+## Cumulative Security Summary (v3.7.3 → v3.7.5)
+
+Across three security-focused releases, **31 security issues** have been identified and resolved:
+
+| Severity | Count | Examples |
+|----------|-------|---------|
+| CRITICAL | 2 | Predictable encryption key, weak key derivation |
+| HIGH | 7 | CORS bypass, prototype pollution, no HTTPS redirect, country injection, metrics auth |
+| MEDIUM | 11 | CSP issues, incomplete sanitization, header trust, timer leaks |
+| LOW | 11 | Error leakage, inconsistent validation, deprecated headers, pre-release deps |
+
+### Deferred
+
+| ID | Description | Reason |
+|-----|-------------|--------|
+| SEC-003 | API keys stored in client-deliverable tokens | Architectural — requires server-side credential storage redesign |
+
+---
+
+## Deployment Notes
+
+### Current Requirements (v3.7.5)
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `ENCRYPTION_KEY` | **Yes** | Min 32 characters. Used for AES-256-GCM with PBKDF2 (310K iterations). |
+| `METRICS_API_KEY` | No | Enables `/metrics` and `/status/circuit-breakers` endpoints when set. |
+
+### Token Compatibility Matrix
+
+| Token Created With | Works In |
+|-------------------|----------|
+| v3.7.5 | v3.7.5+ |
+| v3.7.4 | v3.7.4+ |
+| v3.7.3 | v3.7.3+ |
+| v3.7.2 and earlier | ❌ Must regenerate |
+
+### Upgrade Path
 
 ```bash
-# Deploy the updated code
+# Deploy latest code
 vercel --prod
 
-# If you haven't already set ENCRYPTION_KEY (required since v3.7.3):
+# First-time setup (required since v3.7.3)
 vercel env add ENCRYPTION_KEY
+# Paste output of: openssl rand -base64 32
+
+# Optional: enable monitoring
+vercel env add METRICS_API_KEY
+# Paste a secure random string
 ```
-
-### Existing Tokens
-
-Existing encrypted tokens from v3.7.3 remain valid. Tokens from v3.7.2 or earlier require regeneration.
