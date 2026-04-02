@@ -3,17 +3,17 @@
 // ============================================================
 
 import { describe, it, expect } from 'vitest';
-import { formatMeta, getRpdbPosterUrl } from '../lib/tmdb.js';
+import { formatMeta, getRpdbPosterUrl, TMDBSearchResult } from '../lib/tmdb.js';
 
 describe('formatMeta', () => {
     it('should format a movie meta object correctly', () => {
-        const item = {
+        const item: TMDBSearchResult = {
             id: 12345,
             title: 'Test Movie',
             poster_path: '/abc.jpg',
             backdrop_path: '/def.jpg',
             overview: 'A test movie',
-            release_date: '2024-01-15'
+            release_date: '2024-01-15',
         };
 
         const meta = formatMeta(item, 'tt1234567', 'movie');
@@ -27,13 +27,13 @@ describe('formatMeta', () => {
     });
 
     it('should format a TV series meta object correctly', () => {
-        const item = {
+        const item: TMDBSearchResult = {
             id: 67890,
             name: 'Test Show',
             poster_path: '/xyz.jpg',
             backdrop_path: null,
             overview: '',
-            first_air_date: '2023-06-20'
+            first_air_date: '2023-06-20',
         };
 
         const meta = formatMeta(item, 'tt9876543', 'tv');
@@ -47,12 +47,12 @@ describe('formatMeta', () => {
     });
 
     it('should handle null poster/backdrop paths', () => {
-        const item = {
+        const item: TMDBSearchResult = {
             id: 1,
             title: 'No Art',
             poster_path: null,
             backdrop_path: null,
-            overview: 'desc'
+            overview: 'desc',
         };
 
         const meta = formatMeta(item, 'tmdb:1', 'movie');
@@ -61,11 +61,11 @@ describe('formatMeta', () => {
     });
 
     it('should handle missing release date', () => {
-        const item = {
+        const item: TMDBSearchResult = {
             id: 1,
             title: 'No Date',
             poster_path: null,
-            overview: ''
+            overview: '',
         };
 
         const meta = formatMeta(item, 'tmdb:1', 'movie');

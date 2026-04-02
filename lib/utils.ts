@@ -2,13 +2,14 @@
 // Utility Functions — shared helpers
 // ============================================================
 
+export interface FetchOptions extends RequestInit {
+    timeout?: number;
+}
+
 /**
  * Fetch with abort timeout.
- * @param {string} url
- * @param {RequestInit} opts
- * @param {number} ms - timeout in milliseconds
  */
-async function fetchWithTimeout(url, opts = {}, ms = 8000) {
+export async function fetchWithTimeout(url: string, opts: FetchOptions = {}, ms: number = 8000): Promise<Response> {
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), ms);
     try {
@@ -23,15 +24,10 @@ async function fetchWithTimeout(url, opts = {}, ms = 8000) {
 
 /**
  * Promise-map with concurrency limit.
- * @template T, R
- * @param {T[]} items
- * @param {(item: T) => Promise<R>} fn
- * @param {number} concurrency
- * @returns {Promise<R[]>}
  */
-async function pMap(items, fn, concurrency = 5) {
-    const results = [];
-    const executing = new Set();
+export async function pMap<T, R>(items: T[], fn: (item: T) => Promise<R>, concurrency: number = 5): Promise<R[]> {
+    const results: Promise<R>[] = [];
+    const executing = new Set<Promise<R>>();
     for (const item of items) {
         const p = Promise.resolve().then(() => fn(item));
         results.push(p);
@@ -45,31 +41,25 @@ async function pMap(items, fn, concurrency = 5) {
 
 /**
  * Convert country name to URL slug for FlixPatrol.
- * @param {string} country
- * @returns {string}
  */
-function getFlixPatrolSlug(country) {
-    if (!country) return "world";
+export function getFlixPatrolSlug(country: string | null | undefined): string {
+    if (!country) return 'world';
     const lower = country.toLowerCase();
-    if (lower === "global" || lower === "worldwide") return "world";
+    if (lower === 'global' || lower === 'worldwide') return 'world';
     return lower.replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
 }
 
 /**
  * Convert country name to catalog ID slug.
- * @param {string} c
- * @returns {string}
  */
-function toIdSlug(c) {
-    return c.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+export function toIdSlug(c: string): string {
+    return c.toLowerCase().replace(/[^a-z0-9]+/g, '_');
 }
 
 /**
  * Escape HTML entities to prevent XSS.
- * @param {string} str
- * @returns {string}
  */
-function escapeHtml(str) {
+export function escapeHtml(str: unknown): string {
     if (typeof str !== 'string') return '';
     return str
         .replace(/&/g, '&amp;')
@@ -81,19 +71,21 @@ function escapeHtml(str) {
 
 /**
  * Escape string for safe inclusion in a JavaScript string literal.
- * @param {string} str
- * @returns {string}
  */
-function escapeJs(str) {
+export function escapeJs(str: unknown): string {
     if (typeof str !== 'string') return '';
-    return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"').replace(/</g, '\\x3c').replace(/>/g, '\\x3e');
+    return str
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/"/g, '\\"')
+        .replace(/</g, '\\x3c')
+        .replace(/>/g, '\\x3e');
 }
 
 /**
  * Generate a simple unique token for config storage.
- * @returns {string}
  */
-function generateToken() {
+export function generateToken(): string {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
     let result = '';
     const randomValues = new Uint8Array(24);
@@ -110,13 +102,3 @@ function generateToken() {
     }
     return result;
 }
-
-module.exports = {
-    fetchWithTimeout,
-    pMap,
-    getFlixPatrolSlug,
-    toIdSlug,
-    escapeHtml,
-    escapeJs,
-    generateToken,
-};

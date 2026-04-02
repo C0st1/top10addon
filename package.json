@@ -1,19 +1,38 @@
 {
   "name": "netflix-top-10-stremio",
-  "version": "3.5.0",
+  "version": "4.0.0",
+  "type": "module",
   "description": "Live Netflix Top 10 rankings per-country for Stremio",
-  "main": "api/index.js",
+  "main": "api/index.ts",
   "scripts": {
-    "start": "node api/index.js",
+    "start": "node api/index.ts",
+    "dev": "tsx watch api/index.ts",
+    "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint api/ lib/ --ext .ts",
+    "lint:fix": "eslint api/ lib/ --ext .ts --fix",
+    "format": "prettier --write \"api/**/*.ts\" \"lib/**/*.ts\" \"tests/**/*.ts\"",
+    "format:check": "prettier --check \"api/**/*.ts\" \"lib/**/*.ts\" \"tests/**/*.ts\""
   },
   "dependencies": {
-    "cheerio": "1.0.0-rc.12"
+    "cheerio": "1.0.0-rc.12",
+    "pino": "^9.0.0",
+    "pino-pretty": "^11.0.0",
+    "helmet": "^8.0.0",
+    "rate-limiter-flexible": "^5.0.0",
+    "zod": "^3.23.0"
   },
   "devDependencies": {
-    "vitest": "^3.0.0"
+    "vitest": "^3.0.0",
+    "typescript": "^5.5.0",
+    "tsx": "^4.16.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "eslint": "^9.0.0",
+    "prettier": "^3.3.0",
+    "@types/node": "^20.14.0"
   },
   "engines": {
     "node": ">=18.x"
