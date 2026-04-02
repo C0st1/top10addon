@@ -1,13 +1,19 @@
 {
   "name": "netflix-top-10-stremio",
-  "version": "3.1.0",
-  "description": "Weekly updated Netflix Top 10 catalog for Stremio",
+  "version": "3.5.0",
+  "description": "Live Netflix Top 10 rankings per-country for Stremio",
   "main": "api/index.js",
   "scripts": {
-    "start": "node api/index.js"
+    "start": "node api/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "cheerio": "^1.0.0-rc.12"
+    "cheerio": "1.0.0-rc.12"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.0"
   },
   "engines": {
     "node": ">=18.x"
