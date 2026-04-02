@@ -14,13 +14,10 @@ describe('Config Store', () => {
 
     describe('saveConfig', () => {
         it('should save config and return a token', () => {
-            const result = saveConfig(
-                {
-                    tmdbApiKey: 'test-key-123',
-                    country: 'Global',
-                },
-                'https://example.com',
-            );
+            const result = saveConfig({
+                tmdbApiKey: 'test-key-123',
+                country: 'Global'
+            }, 'https://example.com');
 
             expect(result.token).toBeDefined();
             expect(result.token).toHaveLength(24);
@@ -29,31 +26,25 @@ describe('Config Store', () => {
         });
 
         it('should store config retrievable by token', () => {
-            const result = saveConfig(
-                {
-                    tmdbApiKey: 'my-secret-key',
-                    rpdbApiKey: 'rpdb-key',
-                    country: 'Japan,Brazil',
-                    movieType: 'films',
-                },
-                'https://example.com',
-            );
+            const result = saveConfig({
+                tmdbApiKey: 'my-secret-key',
+                rpdbApiKey: 'rpdb-key',
+                country: 'Japan,Brazil',
+                movieType: 'films'
+            }, 'https://example.com');
 
             const config = getConfig(result.token);
-            expect(config!.tmdbApiKey).toBe('my-secret-key');
-            expect(config!.rpdbApiKey).toBe('rpdb-key');
-            expect(config!.country).toBe('Japan,Brazil');
-            expect(config!.movieType).toBe('films');
+            expect(config.tmdbApiKey).toBe('my-secret-key');
+            expect(config.rpdbApiKey).toBe('rpdb-key');
+            expect(config.country).toBe('Japan,Brazil');
+            expect(config.movieType).toBe('films');
         });
 
         it('should NOT expose API key in the token', () => {
-            const result = saveConfig(
-                {
-                    tmdbApiKey: 'super-secret-key-12345',
-                    country: 'Global',
-                },
-                'https://example.com',
-            );
+            const result = saveConfig({
+                tmdbApiKey: 'super-secret-key-12345',
+                country: 'Global'
+            }, 'https://example.com');
 
             // Token should NOT contain the API key
             expect(result.token).not.toContain('super-secret');
@@ -76,15 +67,15 @@ describe('Config Store', () => {
                 tmdbApiKey: 'test-key',
                 country: 'Japan,Brazil',
                 movieType: 'films',
-                seriesType: 'tvshows',
+                seriesType: 'tvshows'
             };
             const encoded = encodeURIComponent(JSON.stringify(config));
             const result = parseConfig(encoded);
 
-            expect(result!.tmdbApiKey).toBe('test-key');
-            expect(result!.multiCountries).toEqual(['Japan', 'Brazil']);
-            expect(result!.movieType).toBe('films');
-            expect(result!.seriesType).toBe('tvshows');
+            expect(result.tmdbApiKey).toBe('test-key');
+            expect(result.multiCountries).toEqual(['Japan', 'Brazil']);
+            expect(result.movieType).toBe('films');
+            expect(result.seriesType).toBe('tvshows');
         });
 
         it('should return null for empty API key', () => {
@@ -101,8 +92,8 @@ describe('Config Store', () => {
             const config = { tmdbApiKey: 'key' };
             const encoded = encodeURIComponent(JSON.stringify(config));
             const result = parseConfig(encoded);
-            expect(result!.country).toBe('Global');
-            expect(result!.multiCountries).toEqual(['Global']);
+            expect(result.country).toBe('Global');
+            expect(result.multiCountries).toEqual(['Global']);
         });
     });
 
@@ -113,15 +104,15 @@ describe('Config Store', () => {
                 rpdbApiKey: '  rpdb  ',
                 country: ' Japan , Brazil ',
                 movieType: ' films ',
-                seriesType: '  ',
+                seriesType: '  '
             });
 
-            expect(result!.tmdbApiKey).toBe('key123');
-            expect(result!.rpdbApiKey).toBe('rpdb');
-            expect(result!.multiCountries).toEqual(['Japan', 'Brazil']);
-            expect(result!.country).toBe('Japan');
-            expect(result!.movieType).toBe('films');
-            expect(result!.seriesType).toBe('series'); // defaults
+            expect(result.tmdbApiKey).toBe('key123');
+            expect(result.rpdbApiKey).toBe('rpdb');
+            expect(result.multiCountries).toEqual(['Japan', 'Brazil']);
+            expect(result.country).toBe('Japan');
+            expect(result.movieType).toBe('films');
+            expect(result.seriesType).toBe('series'); // defaults
         });
 
         it('should return null for missing API key', () => {
