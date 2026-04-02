@@ -20,7 +20,7 @@ describe('Config Store', () => {
             }, 'https://example.com');
 
             expect(result.token).toBeDefined();
-            expect(result.token).toHaveLength(24);
+            expect(result.token).toHaveLength(32); // Fixed: TOKEN_LENGTH is 32 in utils.js
             expect(result.manifestUrl).toMatch(/\/\w+\/manifest\.json$/);
             expect(result.installUrl).toMatch(/^stremio:\/\//);
         });

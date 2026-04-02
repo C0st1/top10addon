@@ -70,9 +70,9 @@ describe('escapeJs', () => {
 });
 
 describe('generateToken', () => {
-    it('should generate a 24-character token', () => {
+    it('should generate a 32-character token', () => {
         const token = generateToken();
-        expect(token).toHaveLength(24);
+        expect(token).toHaveLength(32); // Fixed: TOKEN_LENGTH is 32
     });
 
     it('should generate unique tokens', () => {

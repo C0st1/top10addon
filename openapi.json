@@ -1,0 +1,701 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Netflix Top 10 Stremio Addon API",
+    "description": "API for Netflix Top 10 rankings per-country with Stremio integration. Provides live Netflix Top 10 rankings scraped from FlixPatrol with TMDB metadata matching.",
+    "version": "3.7.0",
+    "contact": {
+      "name": "Netflix Top 10 Addon",
+      "url": "https://github.com/C0st1/top10addon"
+    },
+    "license": {
+      "name": "MIT",
+      "url": "https://opensource.org/licenses/MIT"
+    }
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "Current server"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Configuration",
+      "description": "Configuration page and settings management"
+    },
+    {
+      "name": "API",
+      "description": "API endpoints for key validation and config storage"
+    },
+    {
+      "name": "Stremio",
+      "description": "Stremio addon protocol endpoints (manifest, catalog)"
+    },
+    {
+      "name": "Monitoring",
+      "description": "Health checks and metrics"
+    }
+  ],
+  "paths": {
+    "/": {
+      "get": {
+        "tags": ["Configuration"],
+        "summary": "Configuration page",
+        "description": "Returns the HTML configuration page for setting up the addon",
+        "responses": {
+          "200": {
+            "description": "HTML configuration page",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/configure": {
+      "get": {
+        "tags": ["Configuration"],
+        "summary": "Configuration page",
+        "description": "Returns the HTML configuration page for setting up the addon",
+        "responses": {
+          "200": {
+            "description": "HTML configuration page",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": ["Monitoring"],
+        "summary": "Health check",
+        "description": "Returns service health status including dependency health and rate limit information",
+        "responses": {
+          "200": {
+            "description": "Health status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "tags": ["Monitoring"],
+        "summary": "Prometheus metrics",
+        "description": "Returns Prometheus-compatible metrics for monitoring",
+        "responses": {
+          "200": {
+            "description": "Prometheus metrics",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string",
+                  "example": "# HELP http_requests_total Total HTTP requests\n# TYPE http_requests_total counter\nhttp_requests_total{method=\"GET\",path=\"/health\",status=\"200\"} 10"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/status/circuit-breakers": {
+      "get": {
+        "tags": ["Monitoring"],
+        "summary": "Circuit breaker status",
+        "description": "Returns the current status of all circuit breakers for external services",
+        "responses": {
+          "200": {
+            "description": "Circuit breaker statuses",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "$ref": "#/components/schemas/CircuitBreakerStatus"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/validate-tmdb-key": {
+      "post": {
+        "tags": ["API"],
+        "summary": "Validate TMDB API key",
+        "description": "Validates a TMDB API key by making a test request to the TMDB API",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["apiKey"],
+                "properties": {
+                  "apiKey": {
+                    "type": "string",
+                    "description": "TMDB API key (v3 or v4)",
+                    "example": "8a7f3bc2d1e4f5a6b7c8d9e0f1a2b3c4"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Validation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "headers": {
+              "X-RateLimit-Remaining": {
+                "schema": { "type": "integer" },
+                "description": "Remaining requests in current window"
+              },
+              "X-RateLimit-Reset": {
+                "schema": { "type": "integer" },
+                "description": "Seconds until window resets"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable (circuit breaker open)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/save-config": {
+      "post": {
+        "tags": ["API"],
+        "summary": "Save configuration",
+        "description": "Saves user configuration and returns an opaque token for the manifest URL. The token does not contain sensitive data.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Configuration saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/{token}/manifest.json": {
+      "get": {
+        "tags": ["Stremio"],
+        "summary": "Get addon manifest",
+        "description": "Returns the Stremio addon manifest with catalog definitions",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9]{32}$"
+            },
+            "description": "Configuration token (32 alphanumeric characters)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Stremio manifest",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Manifest"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid token format",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Configuration not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/{token}/catalog/{type}/{id}.json": {
+      "get": {
+        "tags": ["Stremio"],
+        "summary": "Get catalog",
+        "description": "Returns catalog items for a specific type and country",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Configuration token"
+          },
+          {
+            "name": "type",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": ["movie", "series"]
+            },
+            "description": "Content type"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^netflix_top10_(movies|series)_[a-z_]+$"
+            },
+            "description": "Catalog ID (e.g., netflix_top10_movies_global)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Catalog items",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "headers": {
+              "X-RateLimit-Remaining": {
+                "schema": { "type": "integer" }
+              },
+              "X-RateLimit-Reset": {
+                "schema": { "type": "integer" }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "HealthResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["ok", "degraded"]
+          },
+          "type": {
+            "type": "string",
+            "example": "flixpatrol_scraper"
+          },
+          "version": {
+            "type": "string"
+          },
+          "time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "requestId": {
+            "type": "string"
+          },
+          "rateLimits": {
+            "type": "object",
+            "properties": {
+              "api": {
+                "type": "object",
+                "properties": {
+                  "maxRequests": { "type": "integer" },
+                  "windowMs": { "type": "integer" }
+                }
+              },
+              "catalog": {
+                "type": "object",
+                "properties": {
+                  "maxRequests": { "type": "integer" },
+                  "windowMs": { "type": "integer" }
+                }
+              }
+            }
+          },
+          "dependencies": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/DependencyHealth"
+            }
+          }
+        }
+      },
+      "DependencyHealth": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["healthy", "degraded", "unknown"]
+          },
+          "circuitBreaker": {
+            "type": "string",
+            "enum": ["closed", "open", "half_open"]
+          },
+          "failureCount": {
+            "type": "integer"
+          }
+        }
+      },
+      "CircuitBreakerStatus": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "state": {
+            "type": "string",
+            "enum": ["closed", "open", "half_open"]
+          },
+          "failureCount": { "type": "integer" },
+          "successCount": { "type": "integer" },
+          "lastFailureTime": { "type": "integer", "nullable": true },
+          "openedAt": { "type": "integer", "nullable": true }
+        }
+      },
+      "ConfigRequest": {
+        "type": "object",
+        "required": ["tmdbApiKey"],
+        "properties": {
+          "tmdbApiKey": {
+            "type": "string",
+            "description": "TMDB API key",
+            "minLength": 20,
+            "maxLength": 200
+          },
+          "rpdbApiKey": {
+            "type": "string",
+            "description": "RPDB API key (optional)"
+          },
+          "country": {
+            "type": "string",
+            "description": "Comma-separated country names",
+            "default": "Global",
+            "example": "Global,United States,Japan"
+          },
+          "movieType": {
+            "type": "string",
+            "description": "Custom type for movies tab",
+            "default": "movie"
+          },
+          "seriesType": {
+            "type": "string",
+            "description": "Custom type for series tab",
+            "default": "series"
+          }
+        }
+      },
+      "ConfigResponse": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "Opaque token for manifest URL",
+            "example": "A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6"
+          },
+          "manifestUrl": {
+            "type": "string",
+            "description": "Full URL to manifest.json",
+            "example": "https://example.com/A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6/manifest.json"
+          },
+          "installUrl": {
+            "type": "string",
+            "description": "Stremio install URL",
+            "example": "stremio://example.com/A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6/manifest.json"
+          }
+        }
+      },
+      "ValidationResponse": {
+        "type": "object",
+        "properties": {
+          "valid": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "requestId": {
+            "type": "string",
+            "description": "Request ID for debugging (only on server errors)"
+          }
+        }
+      },
+      "Manifest": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "org.stremio.netflixtop10"
+          },
+          "version": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "example": "Netflix Top 10"
+          },
+          "description": {
+            "type": "string"
+          },
+          "logo": {
+            "type": "string",
+            "format": "uri"
+          },
+          "types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "catalogs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Catalog"
+            }
+          },
+          "resources": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["catalog"]
+            }
+          },
+          "behaviorHints": {
+            "type": "object",
+            "properties": {
+              "configurable": {
+                "type": "boolean"
+              }
+            }
+          },
+          "config": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": { "type": "string" },
+                "type": { "type": "string" },
+                "title": { "type": "string" },
+                "required": { "type": "boolean" }
+              }
+            }
+          }
+        }
+      },
+      "Catalog": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "CatalogResponse": {
+        "type": "object",
+        "properties": {
+          "metas": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Meta"
+            }
+          }
+        }
+      },
+      "Meta": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "IMDB ID or tmdb:ID",
+            "example": "tt1234567"
+          },
+          "type": {
+            "type": "string",
+            "enum": ["movie", "series"]
+          },
+          "name": {
+            "type": "string"
+          },
+          "poster": {
+            "type": "string",
+            "format": "uri"
+          },
+          "background": {
+            "type": "string",
+            "format": "uri"
+          },
+          "description": {
+            "type": "string"
+          },
+          "releaseInfo": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}
