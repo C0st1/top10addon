@@ -120,6 +120,19 @@ module.exports = async (req, res) => {
     }
 
     // -----------------------------------------------
+    // Configuration page (Stremio addon config route)
+    // Stremio derives this URL from the manifest location:
+    //   manifest: /{token}/manifest.json  →  config: /{token}/config
+    // -----------------------------------------------
+    const configPageMatch = pathWithoutQuery.match(/^\/([^/]+)\/config$/);
+    if (configPageMatch) {
+        const countries = getAvailableCountries();
+        return res.status(200)
+            .setHeader("Content-Type", "text/html;charset=UTF-8")
+            .send(buildConfigHTML(countries));
+    }
+
+    // -----------------------------------------------
     // Manifest: /{token}/manifest.json
     // -----------------------------------------------
     if (pathWithoutQuery.endsWith("/manifest.json")) {
